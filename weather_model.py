@@ -21,6 +21,25 @@ from config import (
 )
 
 
+def _get_with_retry(url: str, params: dict, max_retries: int = 3, timeout: int = 60) -> Optional[dict]:
+    """GET request with exponential backoff retry."""
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.Timeout:
+            wait = 5 * (attempt + 1)
+            print(f"    Timeout (attempt {attempt+1}/{max_retries}), retrying in {wait}s...")
+            time.sleep(wait)
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(3)
+            else:
+                print(f"    Failed after {max_retries} attempts: {e}")
+    return None
+
+
 @dataclass
 class BinProbability:
     """Probability that max temperature falls in a specific bin."""
@@ -108,9 +127,9 @@ def fetch_ensemble_forecast(
         params["temperature_unit"] = "fahrenheit"
 
     try:
-        resp = requests.get(OPEN_METEO_ENSEMBLE_URL, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _get_with_retry(OPEN_METEO_ENSEMBLE_URL, params)
+        if not data:
+            return None
     except Exception as e:
         print(f"  Error fetching ensemble for {city_id}: {e}")
         return None
@@ -208,9 +227,9 @@ def fetch_actual_temperature(
         params["temperature_unit"] = "fahrenheit"
 
     try:
-        resp = requests.get(OPEN_METEO_HISTORICAL_URL, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _get_with_retry(OPEN_METEO_HISTORICAL_URL, params)
+        if not data:
+            return None
     except Exception as e:
         print(f"  Error fetching actual temp for {city_id}: {e}")
         return None
@@ -251,11 +270,9 @@ def fetch_historical_forecast(
         params["temperature_unit"] = "fahrenheit"
 
     try:
-        resp = requests.get(
-            OPEN_METEO_HISTORICAL_FORECAST_URL, params=params, timeout=60
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        data = _get_with_retry(OPEN_METEO_HISTORICAL_FORECAST_URL, params)
+        if not data:
+            return None
     except Exception as e:
         print(f"  Error fetching historical forecast for {city_id}: {e}")
         return None
