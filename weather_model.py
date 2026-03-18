@@ -108,7 +108,7 @@ def fetch_ensemble_forecast(
         params["temperature_unit"] = "fahrenheit"
 
     try:
-        resp = requests.get(OPEN_METEO_ENSEMBLE_URL, params=params, timeout=30)
+        resp = requests.get(OPEN_METEO_ENSEMBLE_URL, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -208,7 +208,7 @@ def fetch_actual_temperature(
         params["temperature_unit"] = "fahrenheit"
 
     try:
-        resp = requests.get(OPEN_METEO_HISTORICAL_URL, params=params, timeout=30)
+        resp = requests.get(OPEN_METEO_HISTORICAL_URL, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -252,7 +252,7 @@ def fetch_historical_forecast(
 
     try:
         resp = requests.get(
-            OPEN_METEO_HISTORICAL_FORECAST_URL, params=params, timeout=30
+            OPEN_METEO_HISTORICAL_FORECAST_URL, params=params, timeout=60
         )
         resp.raise_for_status()
         data = resp.json()

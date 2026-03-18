@@ -62,13 +62,35 @@ class BacktestResult:
     trades: List[BacktestTrade]
 
 
-def calculate_naive_probability(n_bins: int) -> float:
+def simulate_market_prices(bins: list, ensemble_mean: float, ensemble_std: float) -> Dict[str, float]:
     """
-    Naive market probability: uniform across plausible bins.
-    Real markets aren't uniform, but this is a conservative baseline.
-    If our model can't beat uniform, it definitely can't beat a real market.
+    Simulate realistic Polymarket crowd pricing.
+    
+    The crowd roughly follows the weather forecast but with MORE uncertainty
+    than the ensemble model (slower to update, emotional bias, round-number anchoring).
+    We model the crowd as a gaussian with 1.5x the model's std deviation.
+    
+    Returns dict: bin_label → simulated market price (0..1).
     """
-    return 1.0 / n_bins
+    import math
+    crowd_std = max(ensemble_std * 1.5, 2.0)  # Crowd is less precise than model
+    
+    prices = {}
+    total = 0
+    for b in bins:
+        bin_center = (b.bin_low + b.bin_high) / 2
+        # Gaussian probability for this bin center
+        z = (bin_center - ensemble_mean) / crowd_std if crowd_std > 0 else 0
+        prob = math.exp(-0.5 * z * z)
+        prices[b.label] = prob
+        total += prob
+    
+    # Normalize to sum to 1.0
+    if total > 0:
+        for label in prices:
+            prices[label] /= total
+    
+    return prices
 
 
 def run_backtest(
@@ -131,83 +153,78 @@ def run_backtest(
                 time.sleep(0.3)
                 continue
 
-            # Calculate naive probability
-            active_bins = [b for b in forecast.bins if b.probability > 0]
-            if not active_bins:
-                current_date += timedelta(days=1)
-                continue
+            # Simulate realistic market prices (gaussian crowd)
+            market_prices = simulate_market_prices(
+                forecast.bins, forecast.ensemble_mean, forecast.ensemble_std
+            )
 
-            # Count bins with non-negligible probability for naive estimate
-            plausible_bins = [b for b in forecast.bins if b.probability >= 0.02]
-            n_plausible = max(len(plausible_bins), 5)
-            naive_prob = calculate_naive_probability(n_plausible)
-
-            # Find bins with edge
+            # Find bins with real edge: model_prob vs simulated_market_price
             for b in forecast.bins:
-                edge = (b.probability - naive_prob) * 100  # edge in percentage points
+                market_price = market_prices.get(b.label, 0)
+                edge = (b.probability - market_price) * 100  # edge in percentage points
 
-                if edge >= min_edge:
-                    # We'd bet YES on this bin
-                    cost = naive_prob * bet_amount  # buy YES at naive price
+                # === YES BET: model is MORE confident than market ===
+                if edge >= min_edge and b.probability >= 0.15:
+                    # Buy YES at market price, payout $1 if correct
+                    cost = market_price * bet_amount
                     in_bin = b.bin_low <= actual <= b.bin_high
 
                     if in_bin:
-                        pnl = bet_amount - cost  # payout $1 per share
+                        pnl = bet_amount - cost
                         outcome = "WIN"
                     else:
                         pnl = -cost
                         outcome = "LOSS"
 
-                    trade = BacktestTrade(
+                    trades.append(BacktestTrade(
                         city_id=city_id,
                         target_date=current_date.isoformat(),
                         bin_label=b.label,
                         bin_low=b.bin_low,
                         bin_high=b.bin_high,
                         model_prob=b.probability,
-                        naive_prob=naive_prob,
+                        naive_prob=market_price,
                         edge=edge,
                         bet_side="YES",
                         bet_amount=bet_amount,
                         actual_temp=actual,
                         outcome=outcome,
                         pnl=pnl,
-                    )
-                    trades.append(trade)
+                    ))
                     city_trades += 1
 
-                elif edge <= -min_edge and b.probability < 0.05:
-                    # Bet NO on overpriced bins (model says very unlikely)
-                    cost = (1 - naive_prob) * bet_amount  # buy NO
+                # === NO BET: market overprices a bin, model says unlikely ===
+                # Only bet NO when market prices bin at >8% but model says <2%
+                elif market_price > 0.08 and b.probability < 0.02:
+                    cost = (1 - market_price) * bet_amount
                     in_bin = b.bin_low <= actual <= b.bin_high
 
                     if not in_bin:
-                        pnl = bet_amount - cost  # NO wins
+                        pnl = bet_amount - cost
                         outcome = "WIN"
                     else:
                         pnl = -cost
                         outcome = "LOSS"
 
-                    trade = BacktestTrade(
+                    trades.append(BacktestTrade(
                         city_id=city_id,
                         target_date=current_date.isoformat(),
                         bin_label=b.label,
                         bin_low=b.bin_low,
                         bin_high=b.bin_high,
                         model_prob=b.probability,
-                        naive_prob=naive_prob,
-                        edge=edge,
+                        naive_prob=market_price,
+                        edge=(b.probability - market_price) * 100,
                         bet_side="NO",
                         bet_amount=bet_amount,
                         actual_temp=actual,
                         outcome=outcome,
                         pnl=pnl,
-                    )
-                    trades.append(trade)
+                    ))
                     city_trades += 1
 
             current_date += timedelta(days=1)
-            time.sleep(0.3)  # Rate limit Open-Meteo
+            time.sleep(0.5)  # Rate limit Open-Meteo (increased from 0.3)
 
         print(f"  Trades: {city_trades}")
 
