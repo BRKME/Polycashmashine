@@ -1,0 +1,49 @@
+name: Run Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      cities:
+        description: 'Cities to backtest (space-separated)'
+        required: false
+        default: 'nyc'
+        type: string
+      days:
+        description: 'Number of days to backtest'
+        required: false
+        default: '30'
+        type: string
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run backtest
+        env:
+          BACKTEST_DAYS: ${{ inputs.days }}
+        run: |
+          echo "Cities: ${{ inputs.cities }}"
+          echo "Days: ${{ inputs.days }}"
+          python backtest.py ${{ inputs.cities }} 2>&1 | tee backtest_output.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-results
+          path: |
+            backtest_output.txt
+            backtest_results.json
+          retention-days: 30

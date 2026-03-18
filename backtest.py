@@ -337,9 +337,10 @@ def save_results(result: BacktestResult, path: str = "backtest_results.json") ->
 
 if __name__ == "__main__":
     import sys
+    import os
 
     cities = sys.argv[1:] if len(sys.argv) > 1 else ["nyc"]
-    days = 30  # Start with 30 days
+    days = int(os.getenv("BACKTEST_DAYS", "30"))
 
     result = run_backtest(cities=cities, days=days, min_edge=10.0)
     print_results(result)
