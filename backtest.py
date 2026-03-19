@@ -22,6 +22,7 @@ from config import CITIES, BACKTEST_DAYS, MIN_EDGE_PERCENT
 from weather_model import (
     fetch_historical_forecast,
     fetch_actual_temperature,
+    fetch_actual_temperatures_batch,
     BinProbability,
     ForecastResult,
 )
@@ -135,22 +136,26 @@ def run_backtest(
         print(f"📍 {city_cfg['name']} ({city_id})")
         city_trades = 0
 
+        # Pre-fetch ALL actual temperatures in ONE API call
+        actuals = fetch_actual_temperatures_batch(city_id, start_date, end_date)
+        if not actuals:
+            print(f"  Failed to fetch actual temperatures, skipping city")
+            continue
+
         current_date = start_date
         while current_date <= end_date:
-            # Fetch historical forecast
+            date_str = current_date.isoformat()
+            actual = actuals.get(date_str)
+            if actual is None:
+                current_date += timedelta(days=1)
+                continue
+
+            # Fetch historical forecast (still per-day, but only ~60 calls now instead of ~120)
             forecast = fetch_historical_forecast(city_id, current_date)
             if not forecast:
                 errors += 1
                 current_date += timedelta(days=1)
-                time.sleep(0.3)  # Rate limit
-                continue
-
-            # Fetch actual temperature
-            actual = fetch_actual_temperature(city_id, current_date)
-            if actual is None:
-                errors += 1
-                current_date += timedelta(days=1)
-                time.sleep(0.3)
+                time.sleep(0.5)
                 continue
 
             # Simulate realistic market prices (gaussian crowd)

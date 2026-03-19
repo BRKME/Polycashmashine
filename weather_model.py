@@ -240,6 +240,46 @@ def fetch_actual_temperature(
     return None
 
 
+def fetch_actual_temperatures_batch(
+    city_id: str,
+    start_date: date,
+    end_date: date,
+) -> Dict[str, float]:
+    """
+    Fetch ALL actual temperatures in ONE API call.
+    Returns dict: "YYYY-MM-DD" → temperature.
+    """
+    city = CITIES.get(city_id)
+    if not city:
+        return {}
+
+    params = {
+        "latitude": city["lat"],
+        "longitude": city["lon"],
+        "daily": "temperature_2m_max",
+        "timezone": city["timezone"],
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+    }
+    if city["unit"] == "fahrenheit":
+        params["temperature_unit"] = "fahrenheit"
+
+    data = _get_with_retry(OPEN_METEO_HISTORICAL_URL, params)
+    if not data:
+        return {}
+
+    times = data.get("daily", {}).get("time", [])
+    temps = data.get("daily", {}).get("temperature_2m_max", [])
+
+    result = {}
+    for t, v in zip(times, temps):
+        if v is not None:
+            result[t] = v
+    
+    print(f"  Batch fetched {len(result)} actual temperatures")
+    return result
+
+
 def fetch_historical_forecast(
     city_id: str,
     target_date: date,
