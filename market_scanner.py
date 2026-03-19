@@ -152,53 +152,98 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     weather_keywords = [
         "temperature", "highest temp", "lowest temp",
         "°f", "°c", "fahrenheit", "celsius",
-        "weather", "rain", "snow",
+        "weather forecast", "rainfall",
+    ]
+    # More precise: regex patterns for market titles
+    import re as _re
+    weather_patterns = [
+        r"highest temperature in",
+        r"lowest temperature in",
+        r"temperature.*on\s+(january|february|march|april|may|june|july|august|september|october|november|december)",
+        r"\d+°[fc]",
     ]
 
-    # === Strategy 1: Search via /events endpoint (weather events are multi-outcome) ===
-    data = []
+    def _is_weather(text: str) -> bool:
+        t = text.lower()
+        if any(kw in t for kw in weather_keywords):
+            return True
+        if any(_re.search(p, t) for p in weather_patterns):
+            return True
+        return False
 
-    print("  Trying /events endpoint...")
+    # === Strategy 1: Tag-based search (most reliable) ===
+    data = []
+    
+    print("  Trying tag-based search...")
     events_url = f"{GAMMA_API_URL}/events"
-    for offset in range(0, 1000, 100):
+    
+    # Try different tags Polymarket might use
+    for tag in ["temperature", "weather", "daily-temperature"]:
         try:
             params = {
                 "limit": 100,
-                "offset": offset,
                 "active": "true",
                 "closed": "false",
+                "tag": tag,
             }
             resp = requests.get(events_url, params=params, timeout=30)
             resp.raise_for_status()
             events = resp.json()
-            if not events:
-                break
-
-            for event in events:
-                title = event.get("title", "")
-                # Check if event is weather-related
-                if any(kw in title.lower() for kw in weather_keywords):
-                    # Each event contains multiple markets (bins)
+            if events:
+                print(f"    Tag '{tag}': {len(events)} events")
+                for event in events:
                     event_markets = event.get("markets", [])
+                    title = event.get("title", "")
                     for m in event_markets:
-                        # Copy event title as question if market doesn't have one
                         if not m.get("question"):
                             m["question"] = title
                         m["_event_title"] = title
                         data.append(m)
-
-            if len(data) >= 50:
-                break
-            if len(events) < 100:
-                break
             time.sleep(0.3)
         except Exception as e:
-            print(f"    Events error at offset {offset}: {e}")
-            break
+            print(f"    Tag '{tag}' error: {e}")
+    
+    print(f"  Tag search found {len(data)} markets")
 
-    print(f"  Found {len(data)} weather markets via /events")
+    # === Strategy 2: Keyword search via /events ===
+    if len(data) < 5:
+        print("  Trying keyword search in /events...")
+        for offset in range(0, 1000, 100):
+            try:
+                params = {
+                    "limit": 100,
+                    "offset": offset,
+                    "active": "true",
+                    "closed": "false",
+                }
+                resp = requests.get(events_url, params=params, timeout=30)
+                resp.raise_for_status()
+                events = resp.json()
+                if not events:
+                    break
 
-    # === Strategy 2: Fallback — /markets with keyword search ===
+                for event in events:
+                    title = event.get("title", "")
+                    if _is_weather(title):
+                        event_markets = event.get("markets", [])
+                        for m in event_markets:
+                            if not m.get("question"):
+                                m["question"] = title
+                            m["_event_title"] = title
+                            data.append(m)
+
+                if len(data) >= 50:
+                    break
+                if len(events) < 100:
+                    break
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"    Events error at offset {offset}: {e}")
+                break
+
+        print(f"  Keyword search found {len(data)} weather markets")
+
+    # === Strategy 3: Fallback — /markets with keyword search ===
     if len(data) < 5:
         print("  Falling back to /markets keyword search...")
         total_scanned = 0
@@ -226,10 +271,7 @@ def fetch_weather_markets() -> List[WeatherMarket]:
                         keys = list(m.keys())[:8]
                         print(f"    [{i}] q='{q[:80]}' keys={keys}")
 
-                weather_batch = [m for m in batch if any(
-                    kw in m.get("question", "").lower()
-                    for kw in weather_keywords
-                )]
+                weather_batch = [m for m in batch if _is_weather(m.get("question", ""))]
                 data.extend(weather_batch)
 
                 if len(data) >= 50 or len(batch) < 100:
