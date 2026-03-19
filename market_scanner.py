@@ -68,6 +68,13 @@ CITY_PATTERNS = {
     "seoul": [r"seoul", r"incheon"],
     "london": [r"london", r"heathrow"],
     "shanghai": [r"shanghai", r"pudong"],
+    "hong_kong": [r"hong.?kong"],
+    "warsaw": [r"warsaw"],
+    "tokyo": [r"tokyo", r"narita", r"haneda"],
+    "la": [r"los angeles", r"\bla\b.*temp", r"\blax\b"],
+    "chicago": [r"chicago", r"o.?hare"],
+    "miami": [r"miami"],
+    "paris": [r"paris", r"orly"],
 }
 
 
@@ -142,41 +149,52 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     url = f"{GAMMA_API_URL}/markets"
     markets = []
 
-    # Fetch a large batch and filter by weather keywords
-    # The Gamma API tag system may not use "temperature" directly
-    all_data = []
-    for offset in [0, 100]:
+    # Weather markets are low-volume but created daily.
+    # Don't sort by volume — fetch newest first and paginate deeply.
+    weather_keywords = [
+        "temperature", "highest temp", "lowest temp",
+        "°f", "°c", "fahrenheit", "celsius",
+    ]
+
+    data = []
+    total_scanned = 0
+
+    for offset in range(0, 2000, 100):  # Up to 2000 markets
         try:
             params = {
                 "limit": 100,
                 "offset": offset,
                 "active": "true",
                 "closed": "false",
-                "order": "volume24hr",
-                "_sort": "volume24hr:desc",
             }
             resp = requests.get(url, params=params, timeout=30)
             resp.raise_for_status()
             batch = resp.json()
-            all_data.extend(batch)
+            if not batch:
+                break
+
+            total_scanned += len(batch)
+
+            # Filter this batch by keywords
+            weather_batch = [m for m in batch if any(
+                kw in m.get("question", "").lower()
+                for kw in weather_keywords
+            )]
+            data.extend(weather_batch)
+
+            # Early exit once we have enough
+            if len(data) >= 50:
+                break
+
             if len(batch) < 100:
                 break
-            time.sleep(0.5)
+
+            time.sleep(0.3)
         except Exception as e:
-            print(f"  Error fetching markets (offset={offset}): {e}")
+            print(f"  Error at offset {offset}: {e}")
             break
 
-    # Filter by weather/temperature keywords
-    weather_keywords = [
-        "temperature", "highest temp", "lowest temp",
-        "°f", "°c", "fahrenheit", "celsius",
-    ]
-    data = [m for m in all_data if any(
-        kw in m.get("question", "").lower()
-        for kw in weather_keywords
-    )]
-
-    print(f"  Found {len(data)} temperature-related markets")
+    print(f"  Scanned {total_scanned} markets, found {len(data)} weather markets")
 
     # Debug: show first 15 market questions to understand format
     print(f"\n  DEBUG — Sample market questions:")
