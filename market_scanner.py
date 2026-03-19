@@ -149,17 +149,18 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     url = f"{GAMMA_API_URL}/markets"
     markets = []
 
-    # Weather markets are low-volume but created daily.
-    # Don't sort by volume — fetch newest first and paginate deeply.
     weather_keywords = [
         "temperature", "highest temp", "lowest temp",
         "°f", "°c", "fahrenheit", "celsius",
+        "weather", "rain", "snow",
     ]
 
+    # === Strategy 1: Search via /events endpoint (weather events are multi-outcome) ===
     data = []
-    total_scanned = 0
 
-    for offset in range(0, 2000, 100):  # Up to 2000 markets
+    print("  Trying /events endpoint...")
+    events_url = f"{GAMMA_API_URL}/events"
+    for offset in range(0, 1000, 100):
         try:
             params = {
                 "limit": 100,
@@ -167,34 +168,77 @@ def fetch_weather_markets() -> List[WeatherMarket]:
                 "active": "true",
                 "closed": "false",
             }
-            resp = requests.get(url, params=params, timeout=30)
+            resp = requests.get(events_url, params=params, timeout=30)
             resp.raise_for_status()
-            batch = resp.json()
-            if not batch:
+            events = resp.json()
+            if not events:
                 break
 
-            total_scanned += len(batch)
+            for event in events:
+                title = event.get("title", "")
+                # Check if event is weather-related
+                if any(kw in title.lower() for kw in weather_keywords):
+                    # Each event contains multiple markets (bins)
+                    event_markets = event.get("markets", [])
+                    for m in event_markets:
+                        # Copy event title as question if market doesn't have one
+                        if not m.get("question"):
+                            m["question"] = title
+                        m["_event_title"] = title
+                        data.append(m)
 
-            # Filter this batch by keywords
-            weather_batch = [m for m in batch if any(
-                kw in m.get("question", "").lower()
-                for kw in weather_keywords
-            )]
-            data.extend(weather_batch)
-
-            # Early exit once we have enough
             if len(data) >= 50:
                 break
-
-            if len(batch) < 100:
+            if len(events) < 100:
                 break
-
             time.sleep(0.3)
         except Exception as e:
-            print(f"  Error at offset {offset}: {e}")
+            print(f"    Events error at offset {offset}: {e}")
             break
 
-    print(f"  Scanned {total_scanned} markets, found {len(data)} weather markets")
+    print(f"  Found {len(data)} weather markets via /events")
+
+    # === Strategy 2: Fallback — /markets with keyword search ===
+    if len(data) < 5:
+        print("  Falling back to /markets keyword search...")
+        total_scanned = 0
+        for offset in range(0, 500, 100):
+            try:
+                params = {
+                    "limit": 100,
+                    "offset": offset,
+                    "active": "true",
+                    "closed": "false",
+                }
+                resp = requests.get(url, params=params, timeout=30)
+                resp.raise_for_status()
+                batch = resp.json()
+                if not batch:
+                    break
+
+                total_scanned += len(batch)
+
+                # Debug: dump first batch questions
+                if offset == 0:
+                    print(f"  DEBUG — First 5 raw market questions:")
+                    for i, m in enumerate(batch[:5]):
+                        q = m.get("question", "NO_QUESTION")
+                        keys = list(m.keys())[:8]
+                        print(f"    [{i}] q='{q[:80]}' keys={keys}")
+
+                weather_batch = [m for m in batch if any(
+                    kw in m.get("question", "").lower()
+                    for kw in weather_keywords
+                )]
+                data.extend(weather_batch)
+
+                if len(data) >= 50 or len(batch) < 100:
+                    break
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"    Error at offset {offset}: {e}")
+                break
+        print(f"  Scanned {total_scanned} markets, found {len(data)} weather")
 
     # Debug: show first 15 market questions to understand format
     print(f"\n  DEBUG — Sample market questions:")
