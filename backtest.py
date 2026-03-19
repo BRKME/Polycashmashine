@@ -158,14 +158,31 @@ def run_backtest(
                 forecast.bins, forecast.ensemble_mean, forecast.ensemble_std
             )
 
-            # Find bins with real edge: model_prob vs simulated_market_price
-            for b in forecast.bins:
-                market_price = market_prices.get(b.label, 0)
-                edge = (b.probability - market_price) * 100  # edge in percentage points
+            # Build bin list with indices for neighbor lookups
+            bin_list = forecast.bins
 
-                # === YES BET: model is MORE confident than market ===
-                if edge >= min_edge and b.probability >= 0.15:
-                    # Buy YES at market price, payout $1 if correct
+            # Find bins with real edge: model_prob vs simulated_market_price
+            for i, b in enumerate(bin_list):
+                market_price = market_prices.get(b.label, 0)
+                edge = (b.probability - market_price) * 100
+
+                # === YES BET (v3): cluster-aware ===
+                # Key insight from v2: model predicts right AREA but 2°F bin is too narrow.
+                # Fix: require high cluster probability (peak + neighbors).
+                # This filters out days with high model uncertainty.
+                if edge >= min_edge and b.probability >= 0.25:
+                    # Calculate 3-bin cluster probability (this bin + left + right)
+                    cluster_prob = b.probability
+                    if i > 0:
+                        cluster_prob += bin_list[i - 1].probability
+                    if i < len(bin_list) - 1:
+                        cluster_prob += bin_list[i + 1].probability
+
+                    # Only bet when cluster captures >55% of ensemble members
+                    # This means model is confident about the temperature REGION
+                    if cluster_prob < 0.55:
+                        continue
+
                     cost = market_price * bet_amount
                     in_bin = b.bin_low <= actual <= b.bin_high
 
