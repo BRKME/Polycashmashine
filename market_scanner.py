@@ -63,11 +63,11 @@ class EdgeSignal:
 
 # City name patterns for matching market questions to our config
 CITY_PATTERNS = {
-    "nyc": [r"new york", r"\bnyc\b", r"laguardia"],
-    "tel_aviv": [r"tel aviv"],
-    "seoul": [r"seoul"],
+    "nyc": [r"new york", r"\bnyc\b", r"laguardia", r"\bn\.?y\.?\b"],
+    "tel_aviv": [r"tel.?aviv"],
+    "seoul": [r"seoul", r"incheon"],
     "london": [r"london", r"heathrow"],
-    "shanghai": [r"shanghai"],
+    "shanghai": [r"shanghai", r"pudong"],
 }
 
 
@@ -139,56 +139,71 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     """
     print("Fetching weather markets from Polymarket...")
 
-    # Search for temperature markets
     url = f"{GAMMA_API_URL}/markets"
-    params = {
-        "limit": 100,
-        "active": "true",
-        "closed": "false",
-        "tag": "temperature",
-    }
-
     markets = []
 
-    try:
-        resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        print(f"  Error fetching markets: {e}")
-        # Fallback: search by keyword
+    # Fetch a large batch and filter by weather keywords
+    # The Gamma API tag system may not use "temperature" directly
+    all_data = []
+    for offset in [0, 100]:
         try:
-            params2 = {
-                "limit": 200,
+            params = {
+                "limit": 100,
+                "offset": offset,
                 "active": "true",
                 "closed": "false",
+                "order": "volume24hr",
+                "_sort": "volume24hr:desc",
             }
-            resp = requests.get(url, params=params2, timeout=30)
+            resp = requests.get(url, params=params, timeout=30)
             resp.raise_for_status()
-            data = resp.json()
-            # Filter by weather keywords
-            data = [m for m in data if any(
-                kw in m.get("question", "").lower()
-                for kw in ["temperature", "highest temp", "lowest temp"]
-            )]
-        except Exception as e2:
-            print(f"  Fallback search also failed: {e2}")
-            return []
+            batch = resp.json()
+            all_data.extend(batch)
+            if len(batch) < 100:
+                break
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  Error fetching markets (offset={offset}): {e}")
+            break
+
+    # Filter by weather/temperature keywords
+    weather_keywords = [
+        "temperature", "highest temp", "lowest temp",
+        "°f", "°c", "fahrenheit", "celsius",
+    ]
+    data = [m for m in all_data if any(
+        kw in m.get("question", "").lower()
+        for kw in weather_keywords
+    )]
 
     print(f"  Found {len(data)} temperature-related markets")
+
+    # Debug: show first 15 market questions to understand format
+    print(f"\n  DEBUG — Sample market questions:")
+    for i, m in enumerate(data[:15]):
+        q = m.get("question", "N/A")
+        print(f"    [{i}] {q}")
+    print()
+
+    unmatched_cities = 0
+    unmatched_dates = 0
+    past_dates = 0
 
     for m in data:
         question = m.get("question", "")
         city_id = match_city(question)
         if not city_id:
+            unmatched_cities += 1
             continue
 
         target_date = parse_date_from_question(question)
         if not target_date:
+            unmatched_dates += 1
             continue
 
         # Skip markets that already resolved
         if target_date < date.today():
+            past_dates += 1
             continue
 
         # Parse outcomes/bins
@@ -247,6 +262,10 @@ def fetch_weather_markets() -> List[WeatherMarket]:
             volume=float(m.get("volume", 0) or 0),
         ))
 
+    print(f"\n  DEBUG — Filtering summary:")
+    print(f"    Unmatched city: {unmatched_cities}")
+    print(f"    Unmatched date: {unmatched_dates}")
+    print(f"    Past dates: {past_dates}")
     print(f"  Matched {len(markets)} markets to supported cities")
     return markets
 
