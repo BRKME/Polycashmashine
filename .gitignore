@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 .env
 backtest_results.json
+live_signals.json
 *.db
 .pytest_cache/

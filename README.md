@@ -46,8 +46,8 @@ config.py           — города, пороги, API endpoints
 
 ## Фазы
 
-- [x] Phase 1: Weather model + бэктест
-- [ ] Phase 2: Polymarket market scanner (сравнение с реальными ценами)
+- [x] Phase 1: Weather model + бэктест (v3 — 71% hit rate, +$170/60 дней)
+- [x] Phase 2: Live market scanner (реальные цены Polymarket)
 - [ ] Phase 3: Auto-trade через py-clob-client
 - [ ] Phase 4: GitHub Actions (каждые 6 часов по обновлению моделей)
 

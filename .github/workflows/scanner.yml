@@ -1,0 +1,36 @@
+name: Live Market Scanner
+
+on:
+  schedule:
+    # Run every 6 hours (aligned with weather model updates)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Scan markets
+        run: python market_scanner.py 2>&1 | tee scanner_output.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-${{ github.run_number }}
+          path: |
+            scanner_output.txt
+            live_signals.json
+          retention-days: 30
