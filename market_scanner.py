@@ -197,12 +197,15 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     unmatched_city = 0
     unmatched_date = 0
     past_dates = 0
+    unmatched_samples = []
 
     for m in data:
         question = m.get("question", "")
         city_id = match_city(question)
         if not city_id:
             unmatched_city += 1
+            if len(unmatched_samples) < 10:
+                unmatched_samples.append(question[:80])
             continue
 
         target_date = parse_date_from_question(question)
@@ -271,8 +274,12 @@ def fetch_weather_markets() -> List[WeatherMarket]:
             volume=float(m.get("volume", 0) or 0),
         ))
 
-    print(f"\n  DEBUG — Filtering summary:")
+    print(f"\n  Filtering summary:")
     print(f"    Unmatched city: {unmatched_city}")
+    if unmatched_samples:
+        print(f"    Unmatched examples:")
+        for s in unmatched_samples[:5]:
+            print(f"      '{s}'")
     print(f"    Unmatched date: {unmatched_date}")
     print(f"    Past dates: {past_dates}")
     print(f"  Matched {len(markets)} markets to supported cities")
