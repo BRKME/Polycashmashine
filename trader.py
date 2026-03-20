@@ -21,11 +21,12 @@ from datetime import datetime, date
 from dataclasses import dataclass, asdict
 from typing import List
 
-# === Set proxy BEFORE any imports that use requests ===
+# === Set proxy BEFORE any imports that use requests/httpx ===
 PROXY_URL = os.getenv("PROXY_URL", "")
 if PROXY_URL:
     os.environ["HTTP_PROXY"] = PROXY_URL
     os.environ["HTTPS_PROXY"] = PROXY_URL
+    os.environ["ALL_PROXY"] = PROXY_URL
     print(f"  Proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL[:30]}...", flush=True)
 
 from market_scanner import EdgeSignal, fetch_weather_markets, find_edge_signals
@@ -165,6 +166,9 @@ def run():
         spent = load_daily_spent()
     remaining = DAILY_BUDGET - spent
     client = None if DRY_RUN else get_clob_client()
+    if not DRY_RUN and not client:
+        print("  FATAL: Could not init CLOB client. Aborting.", flush=True)
+        return
     results = []
     traded = 0
 

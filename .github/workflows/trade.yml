@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install requests py-clob-client PySocks
+      - run: pip install requests py-clob-client PySocks "httpx[socks]"
 
       - name: Download daily state
         uses: dawidd6/action-download-artifact@v6
