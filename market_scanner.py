@@ -219,10 +219,16 @@ def fetch_weather_markets() -> List[WeatherMarket]:
             past_dates += 1
             continue
 
-        # Parse outcomes/bins
+        # Parse outcomes (can be JSON string)
         outcomes = m.get("outcomes", [])
         prices = m.get("outcomePrices", [])
         tokens = m.get("clobTokenIds", [])
+
+        try:
+            if isinstance(outcomes, str):
+                outcomes = json.loads(outcomes)
+        except (ValueError, json.JSONDecodeError):
+            outcomes = []
 
         if not outcomes or not prices:
             continue
@@ -294,42 +300,87 @@ def find_edge_signals(
 ) -> List[EdgeSignal]:
     """
     Compare model forecasts with real market prices.
-    Returns list of edge opportunities sorted by edge size.
+    
+    KEY INSIGHT: Each Polymarket temperature "market" is a single YES/NO question
+    like "Will the highest temperature in London be 14°C on March 20?"
+    The YES price IS the market's implied probability for that bin.
+    
+    We group markets by (city, date), fetch ONE forecast per group,
+    then compare each bin's YES price to model probability.
     """
     signals = []
 
+    # Group markets by (city_id, target_date) to avoid redundant API calls
+    from collections import defaultdict
+    groups = defaultdict(list)
     for market in markets:
-        print(f"\n  Analyzing: {market.question[:70]}")
-        print(f"  City: {market.city_id}, Date: {market.target_date}")
+        key = (market.city_id, market.target_date)
+        groups[key].append(market)
 
-        # Get ensemble forecast
-        forecast = fetch_ensemble_forecast(
-            market.city_id,
-            market.target_date,
-            model=model,
-        )
+    print(f"\n  Grouped into {len(groups)} (city, date) pairs")
+
+    # Cache forecasts
+    forecast_cache = {}
+
+    for (city_id, target_date), group_markets in groups.items():
+        # Fetch ONE ensemble forecast per (city, date)
+        cache_key = f"{city_id}_{target_date}"
+        if cache_key not in forecast_cache:
+            print(f"\n  Fetching forecast: {city_id} {target_date} ({len(group_markets)} bins)")
+            forecast = fetch_ensemble_forecast(city_id, target_date, model=model)
+            forecast_cache[cache_key] = forecast
+            if forecast:
+                print(f"  Model: mean={forecast.ensemble_mean:.1f}, std={forecast.ensemble_std:.1f}, members={forecast.total_members}")
+            else:
+                print(f"  ⚠️ No forecast available")
+                continue
+            time.sleep(0.5)
+
+        forecast = forecast_cache[cache_key]
         if not forecast:
-            print(f"  ⚠️ Could not get forecast, skipping")
             continue
 
-        print(f"  Model: mean={forecast.ensemble_mean:.1f}, std={forecast.ensemble_std:.1f}, members={forecast.total_members}")
+        # Each market in this group is one temperature bin (YES/NO question)
+        # Extract the temperature from the question and match to model
+        for market in group_markets:
+            # Parse the temperature value from the question
+            # "Will the highest temperature in London be 14°C on March 20?" → 14
+            question = market.question.lower()
+            temp_match = re.search(r'be (?:between )?(\d+)(?:[°\s]|$)', question)
+            if not temp_match:
+                continue
+            
+            bin_temp = float(temp_match.group(1))
+            
+            # Determine if it's a range ("between 44-45°F") or single value ("be 14°C")
+            range_match = re.search(r'between\s+(\d+)\s*[-–]\s*(\d+)', question)
+            is_below = "or below" in question or "or lower" in question
+            is_above = "or higher" in question or "or above" in question
+            
+            if range_match:
+                bin_low = float(range_match.group(1))
+                bin_high = float(range_match.group(2)) + 0.99
+            elif is_below:
+                bin_low = bin_temp - 20
+                bin_high = bin_temp + 0.99
+            elif is_above:
+                bin_low = bin_temp
+                bin_high = bin_temp + 20
+            else:
+                # Single degree: "be 14°C" means 14.0-14.99
+                bin_low = bin_temp
+                bin_high = bin_temp + 0.99
 
-        # Match market bins to model bins
-        for mb in market.bins:
-            if mb.bin_low == 0 and mb.bin_high == 0:
-                continue  # Unparsed bin
-
-            # Find matching model bin
+            # Calculate model probability for this bin
             model_prob = 0
             model_idx = -1
             for j, fb in enumerate(forecast.bins):
-                # Check if bins overlap
-                if fb.bin_low <= mb.bin_high and fb.bin_high >= mb.bin_low:
+                if fb.bin_low <= bin_high and fb.bin_high >= bin_low:
                     model_prob += fb.probability
                     if model_idx == -1:
                         model_idx = j
 
-            # Calculate cluster probability (3-bin)
+            # Cluster probability (this bin + neighbors)
             cluster_prob = model_prob
             if model_idx >= 0:
                 if model_idx > 0:
@@ -337,39 +388,50 @@ def find_edge_signals(
                 if model_idx < len(forecast.bins) - 1:
                     cluster_prob += forecast.bins[model_idx + 1].probability
 
-            edge = (model_prob - mb.price) * 100
+            # YES price = market's implied probability for this bin
+            # For YES/NO markets, the YES price is in the first bin
+            yes_price = 0
+            for b in market.bins:
+                if b.label.lower() in ("yes", "y"):
+                    yes_price = b.price
+                    break
+            # Fallback: try first bin price
+            if yes_price == 0 and market.bins:
+                yes_price = market.bins[0].price
 
-            # === YES signal: model > market ===
+            edge = (model_prob - yes_price) * 100
+
+            # === YES signal: model more confident than market ===
             if edge >= min_edge and model_prob >= 0.25 and cluster_prob >= 0.55:
-                ev = model_prob * (1 - mb.price) - (1 - model_prob) * mb.price
+                ev = model_prob * (1 - yes_price) - (1 - model_prob) * yes_price
+                token_id = market.bins[0].token_id if market.bins else ""
                 signals.append(EdgeSignal(
                     market=market,
-                    bin_label=mb.label,
-                    token_id=mb.token_id,
+                    bin_label=f"{int(bin_low)}-{int(bin_high)}",
+                    token_id=token_id,
                     model_prob=model_prob,
-                    market_price=mb.price,
+                    market_price=yes_price,
                     edge=edge,
                     cluster_prob=cluster_prob,
                     bet_side="YES",
                     expected_value=ev,
                 ))
 
-            # === NO signal: market overprices, model disagrees ===
-            elif mb.price > 0.08 and model_prob < 0.02:
-                ev = (1 - model_prob) * mb.price - model_prob * (1 - mb.price)
+            # === NO signal: market overprices, model says unlikely ===
+            elif yes_price > 0.08 and model_prob < 0.02:
+                ev = (1 - model_prob) * yes_price - model_prob * (1 - yes_price)
+                token_id = market.bins[1].token_id if len(market.bins) > 1 else ""
                 signals.append(EdgeSignal(
                     market=market,
-                    bin_label=mb.label,
-                    token_id=mb.token_id,
+                    bin_label=f"{int(bin_low)}-{int(bin_high)}",
+                    token_id=token_id,
                     model_prob=model_prob,
-                    market_price=mb.price,
+                    market_price=yes_price,
                     edge=edge,
                     cluster_prob=cluster_prob,
                     bet_side="NO",
                     expected_value=ev,
                 ))
-
-        time.sleep(0.5)
 
     # Sort by absolute edge
     signals.sort(key=lambda s: abs(s.edge), reverse=True)
@@ -438,11 +500,15 @@ if __name__ == "__main__":
     if not markets:
         print("\nNo weather markets found. Try running during market hours.")
     else:
-        for m in markets[:5]:
-            print(f"\n  {m.question[:70]}")
-            print(f"  City: {m.city_id}, Date: {m.target_date}, Bins: {len(m.bins)}")
-            for b in m.bins[:3]:
-                print(f"    {b.label}: {b.price:.0%}")
+        # Show sample — group by (city, date)
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for m in markets:
+            groups[(m.city_id, m.target_date)].append(m)
+        
+        print(f"\n  {len(groups)} city-date pairs:")
+        for (city, dt), mlist in list(groups.items())[:5]:
+            print(f"    {city} {dt}: {len(mlist)} bins")
 
         signals = find_edge_signals(markets)
         print_signals(signals)
