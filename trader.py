@@ -66,8 +66,15 @@ def load_daily_spent():
     try:
         with open("daily_trades.json") as f:
             d = json.load(f)
-        if d.get("date") == date.today().isoformat():
-            return float(d.get("spent", 0))
+        if d.get("date") != date.today().isoformat():
+            return 0.0
+        # Only sum actual fills, not dry runs or errors
+        trades = d.get("trades", [])
+        total = sum(
+            t.get("amount", 0) for t in trades
+            if isinstance(t, dict) and str(t.get("action", "")).startswith("BUY_")
+        )
+        return total
     except Exception:
         pass
     return 0.0
