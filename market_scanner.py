@@ -75,6 +75,8 @@ CITY_PATTERNS = {
     "chicago": [r"chicago", r"o.?hare"],
     "miami": [r"miami"],
     "paris": [r"paris", r"orly"],
+    "dallas": [r"dallas", r"\bdfw\b"],
+    "atlanta": [r"atlanta"],
 }
 
 
@@ -142,37 +144,22 @@ def match_city(question: str) -> Optional[str]:
 def fetch_weather_markets() -> List[WeatherMarket]:
     """
     Fetch active weather/temperature markets from Polymarket Gamma API.
-    
-    Approach: paginate /events, filter by title keywords, collect markets.
-    Weather events have titles like "Highest temperature in NYC on March 18?"
+    Uses tag_slug=temperature — confirmed working via diagnostic.
     """
     print("Fetching weather markets from Polymarket...")
 
-    import re as _re
-
-    weather_patterns = [
-        r"highest temperature in",
-        r"lowest temperature in",
-        r"temperature .* on .*(january|february|march|april|may|june|july|august|september|october|november|december)",
-        r"\d+\s*°[fc].*higher",
-        r"will the .* temperature",
-    ]
-
-    def _is_weather_event(title: str) -> bool:
-        t = title.lower()
-        return any(_re.search(p, t) for p in weather_patterns)
-
     events_url = f"{GAMMA_API_URL}/events"
     data = []
-    weather_event_count = 0
 
-    for offset in range(0, 3000, 100):
+    # tag_slug=temperature returns daily temperature events
+    for offset in range(0, 500, 100):
         try:
             params = {
                 "limit": 100,
                 "offset": offset,
                 "active": "true",
                 "closed": "false",
+                "tag_slug": "temperature",
             }
             resp = requests.get(events_url, params=params, timeout=30)
             resp.raise_for_status()
@@ -182,35 +169,29 @@ def fetch_weather_markets() -> List[WeatherMarket]:
 
             for event in events:
                 title = event.get("title", "")
-                if _is_weather_event(title):
-                    weather_event_count += 1
-                    event_markets = event.get("markets", [])
-                    for m in event_markets:
-                        if not m.get("question"):
-                            m["question"] = title
-                        m["_event_title"] = title
-                        data.append(m)
+                event_markets = event.get("markets", [])
+                for m in event_markets:
+                    if not m.get("question"):
+                        m["question"] = title
+                    m["_event_title"] = title
+                    data.append(m)
 
-            if len(data) >= 200:
-                break
+            print(f"  Page {offset//100 + 1}: {len(events)} events, {len(data)} markets total")
+
             if len(events) < 100:
                 break
-            time.sleep(0.2)
+            time.sleep(0.3)
         except Exception as e:
             print(f"  Error at offset {offset}: {e}")
             break
 
-    print(f"  Scanned events up to offset {offset}")
-    print(f"  Weather events: {weather_event_count}, markets: {len(data)}")
+    print(f"  Total: {len(data)} temperature markets found")
 
-    if not data:
-        print("  No weather events found. Showing sample of what API returns:")
-        try:
-            resp = requests.get(events_url, params={"limit": 5, "active": "true"}, timeout=30)
-            for e in resp.json()[:5]:
-                print(f"    '{e.get('title', 'N/A')[:80]}'")
-        except:
-            pass
+    # Debug: sample
+    if data:
+        print(f"  Sample questions:")
+        for m in data[:5]:
+            print(f"    {m.get('question', 'N/A')[:75]}")
 
     markets = []
     unmatched_city = 0

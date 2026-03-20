@@ -99,11 +99,27 @@ CITIES = {
     },
     "paris": {
         "name": "Paris",
-        "lat": 49.0097,  # Orly
+        "lat": 49.0097,
         "lon": 2.3381,
         "timezone": "Europe/Paris",
         "unit": "celsius",
         "bin_width": 1,
+    },
+    "dallas": {
+        "name": "Dallas",
+        "lat": 32.8998,  # DFW Airport
+        "lon": -97.0403,
+        "timezone": "America/Chicago",
+        "unit": "fahrenheit",
+        "bin_width": 2,
+    },
+    "atlanta": {
+        "name": "Atlanta",
+        "lat": 33.6407,  # Hartsfield-Jackson
+        "lon": -84.4277,
+        "timezone": "America/New_York",
+        "unit": "fahrenheit",
+        "bin_width": 2,
     },
 }
 
