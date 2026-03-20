@@ -152,16 +152,17 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     data = []
 
     # tag_slug=temperature returns daily temperature events
-    for offset in range(0, 500, 100):
+    # Each event has ~11 market bins, so 50 events = ~550 markets
+    for offset in range(0, 200, 50):
         try:
             params = {
-                "limit": 100,
+                "limit": 50,
                 "offset": offset,
                 "active": "true",
                 "closed": "false",
                 "tag_slug": "temperature",
             }
-            resp = requests.get(events_url, params=params, timeout=30)
+            resp = requests.get(events_url, params=params, timeout=60)
             resp.raise_for_status()
             events = resp.json()
             if not events:
@@ -176,13 +177,13 @@ def fetch_weather_markets() -> List[WeatherMarket]:
                     m["_event_title"] = title
                     data.append(m)
 
-            print(f"  Page {offset//100 + 1}: {len(events)} events, {len(data)} markets total")
+            print(f"  Page {offset//50 + 1}: {len(events)} events, {len(data)} markets total", flush=True)
 
-            if len(events) < 100:
+            if len(events) < 50:
                 break
-            time.sleep(0.3)
+            time.sleep(0.5)
         except Exception as e:
-            print(f"  Error at offset {offset}: {e}")
+            print(f"  Error at offset {offset}: {e}", flush=True)
             break
 
     print(f"  Total: {len(data)} temperature markets found")
