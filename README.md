@@ -51,7 +51,25 @@ config.py           — города, пороги, API endpoints
 - [x] Phase 1: Weather model + бэктест (v3 — 71% hit rate, +$170/60 дней)
 - [x] Phase 2: Live market scanner (реальные цены Polymarket, avg edge +26.7%)
 - [x] Phase 3: Auto-trade через py-clob-client
-- [ ] Phase 4: Production hardening (Telegram alerts, P&L tracking)
+- [x] Phase 4: GitHub Actions (каждые 6ч + dry-run + live)
+
+## Торговля
+
+### Dry run (без реальных ордеров)
+Actions → **Weather Bot — Trade** → Run workflow → dry_run=true
+
+### Live trading
+1. Добавь в repo secrets:
+   - `POLY_PRIVATE_KEY` — приватный ключ кошелька Polygon
+   - `POLY_FUNDER` — адрес фандера (из reveal.polymarket.com)
+   - `POLY_SIG_TYPE` — тип подписи (0=EOA, 1=email, 2=browser)
+2. Запусти: Actions → **Weather Bot — Trade** → dry_run=false
+
+### Безопасность
+- `MAX_BET` — макс ставка на трейд (default $5)
+- `DAILY_BUDGET` — дневной лимит (default $50)
+- `MIN_EDGE` — минимальный edge для входа (default 15%)
+- Размер ставки пропорционален edge (линейно до 30%)
 
 ## Auto-Trade
 

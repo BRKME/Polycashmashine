@@ -1,313 +1,184 @@
 """
-Trader — Autonomous order execution on Polymarket via CLOB API.
+Trader — Autonomous order execution on Polymarket.
 
-Takes edge signals from market_scanner and places orders.
-Risk management: max bet per signal, daily budget, min edge threshold.
+Takes edge signals from market_scanner, places orders via CLOB API.
+Safety: max bet per trade, daily budget cap, dry-run mode.
 
-Requirements:
-- POLY_PRIVATE_KEY: Polygon wallet private key
-- POLY_FUNDER: Polymarket proxy/funder address
-- POLY_SIG_TYPE: Signature type (0=EOA, 1=email/Magic, 2=browser proxy)
+Env vars:
+  POLY_PRIVATE_KEY  — Polygon wallet private key
+  POLY_FUNDER       — Polymarket proxy/funder address
+  POLY_SIG_TYPE     — 0=EOA, 1=email/Magic, 2=browser proxy
+  DRY_RUN           — "true" = no real orders (default)
+  MAX_BET           — $ per trade (default 5)
+  DAILY_BUDGET      — $ max per day (default 50)
 """
 
 import os
 import json
 import time
 from datetime import datetime, date
-from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
+from typing import List
 
 from market_scanner import EdgeSignal, fetch_weather_markets, find_edge_signals
+
+MAX_BET = float(os.getenv("MAX_BET", "5"))
+DAILY_BUDGET = float(os.getenv("DAILY_BUDGET", "50"))
+DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+MIN_EDGE = float(os.getenv("MIN_EDGE", "15"))
+MIN_EV = float(os.getenv("MIN_EV", "0.10"))
+
+CLOB_HOST = "https://clob.polymarket.com"
+CHAIN_ID = 137
 
 
 @dataclass
 class TradeResult:
-    """Result of an executed trade."""
-    signal_bin: str
-    market_question: str
-    city: str
-    target_date: str
-    bet_side: str
-    token_id: str
+    signal: dict
+    action: str
     amount: float
     price: float
-    model_prob: float
-    edge: float
-    ev: float
     order_id: str
-    status: str          # "SUCCESS", "FAILED", "DRY_RUN"
-    error: str
     timestamp: str
+    reason: str
 
 
-# === Risk Management ===
-
-class RiskManager:
-    """
-    Controls position sizing and daily limits.
-    
-    Rules:
-    - Max bet per signal: $BET_SIZE (default $2)
-    - Max daily total: $DAILY_BUDGET (default $20)
-    - Min edge to trade: MIN_TRADE_EDGE (default 15%)
-    - Max signals per city per day: 3
-    - Never bet more than balance allows
-    """
-    
-    def __init__(self):
-        self.bet_size = float(os.getenv("BET_SIZE", "2"))
-        self.daily_budget = float(os.getenv("DAILY_BUDGET", "20"))
-        self.min_edge = float(os.getenv("MIN_TRADE_EDGE", "15"))
-        self.spent_today = 0.0
-        self.trades_today: Dict[str, int] = {}  # city → count
-    
-    def can_trade(self, signal: EdgeSignal) -> tuple:
-        """Check if we should trade this signal. Returns (ok, reason)."""
-        if abs(signal.edge) < self.min_edge:
-            return False, f"Edge {signal.edge:.1f}% < min {self.min_edge}%"
-        
-        if self.spent_today + self.bet_size > self.daily_budget:
-            return False, f"Daily budget exhausted (${self.spent_today:.0f}/${self.daily_budget:.0f})"
-        
-        city = signal.market.city_id
-        city_count = self.trades_today.get(city, 0)
-        if city_count >= 3:
-            return False, f"Max 3 trades per city ({city})"
-        
-        if signal.expected_value <= 0:
-            return False, f"Negative EV: {signal.expected_value:.3f}"
-        
-        return True, "OK"
-    
-    def record_trade(self, signal: EdgeSignal, amount: float):
-        """Record a completed trade for budget tracking."""
-        self.spent_today += amount
-        city = signal.market.city_id
-        self.trades_today[city] = self.trades_today.get(city, 0) + 1
-
-
-# === CLOB Client ===
-
-def create_clob_client():
-    """
-    Initialize Polymarket CLOB client.
-    Returns None if credentials not configured (dry run mode).
-    """
-    private_key = os.getenv("POLY_PRIVATE_KEY")
-    funder = os.getenv("POLY_FUNDER")
-    sig_type = int(os.getenv("POLY_SIG_TYPE", "1"))
-    
-    if not private_key or not funder:
-        print("  ⚠️ CLOB credentials not set — DRY RUN mode")
+def get_clob_client():
+    pk = os.getenv("POLY_PRIVATE_KEY")
+    if not pk:
         return None
-    
     try:
         from py_clob_client.client import ClobClient
-        
         client = ClobClient(
-            host="https://clob.polymarket.com",
-            key=private_key,
-            chain_id=137,
-            signature_type=sig_type,
-            funder=funder,
+            CLOB_HOST, key=pk, chain_id=CHAIN_ID,
+            signature_type=int(os.getenv("POLY_SIG_TYPE", "1")),
+            funder=os.getenv("POLY_FUNDER"),
         )
         client.set_api_creds(client.create_or_derive_api_creds())
-        print("  ✅ CLOB client initialized")
+        print("  CLOB client OK", flush=True)
         return client
     except Exception as e:
-        print(f"  ❌ CLOB client failed: {e}")
+        print(f"  CLOB init error: {e}", flush=True)
         return None
 
 
-def place_order(client, signal: EdgeSignal, amount: float) -> TradeResult:
-    """
-    Place a single order on Polymarket.
-    
-    For YES: buy YES tokens at market price (limit order at slightly above)
-    For NO: buy NO tokens (second token in the pair)
-    """
-    base_result = {
-        "signal_bin": signal.bin_label,
-        "market_question": signal.market.question[:100],
-        "city": signal.market.city_id,
-        "target_date": signal.market.target_date.isoformat(),
-        "bet_side": signal.bet_side,
-        "token_id": signal.token_id,
-        "amount": amount,
-        "price": signal.market_price,
-        "model_prob": signal.model_prob,
-        "edge": signal.edge,
-        "ev": signal.expected_value,
-        "timestamp": datetime.utcnow().isoformat(),
+def load_daily_spent():
+    try:
+        with open("daily_trades.json") as f:
+            d = json.load(f)
+        if d.get("date") == date.today().isoformat():
+            return float(d.get("spent", 0))
+    except Exception:
+        pass
+    return 0.0
+
+
+def save_daily(spent, trades):
+    with open("daily_trades.json", "w") as f:
+        json.dump({"date": date.today().isoformat(), "spent": spent, "trades": trades}, f, indent=2)
+
+
+def place_order(client, signal, amount):
+    ts = datetime.utcnow().isoformat()
+    sd = {
+        "market": signal.market.question[:80],
+        "bin": signal.bin_label, "side": signal.bet_side,
+        "model": signal.model_prob, "market": signal.market_price,
+        "edge": signal.edge, "ev": signal.expected_value,
     }
-    
-    if client is None:
-        # Dry run — log what we WOULD do
-        return TradeResult(
-            **base_result,
-            order_id="DRY_RUN",
-            status="DRY_RUN",
-            error="",
-        )
-    
+
+    if DRY_RUN or not client:
+        tag = "DRY_RUN" if DRY_RUN else "NO_CLIENT"
+        print(f"    [{tag}] {signal.bet_side} ${amount:.2f} on {signal.bin_label}", flush=True)
+        return TradeResult(sd, tag, amount, signal.market_price, "", ts, tag)
+
     try:
         from py_clob_client.clob_types import MarketOrderArgs, OrderType
         from py_clob_client.order_builder.constants import BUY
-        
-        # Market order — fill or kill at best available price
-        order_args = MarketOrderArgs(
-            token_id=signal.token_id,
-            amount=amount,
-            side=BUY,
-        )
-        
-        signed_order = client.create_market_order(order_args)
-        resp = client.post_order(signed_order, OrderType.FOK)
-        
-        order_id = resp.get("orderID", "unknown")
-        status = "SUCCESS" if resp.get("success") else "FAILED"
-        error = resp.get("errorMsg", "")
-        
-        return TradeResult(
-            **base_result,
-            order_id=order_id,
-            status=status,
-            error=error,
-        )
-        
+
+        if not signal.token_id:
+            return TradeResult(sd, "ERROR", 0, 0, "", ts, "No token_id")
+
+        order = MarketOrderArgs(token_id=signal.token_id, amount=amount, side=BUY)
+        signed = client.create_market_order(order)
+        resp = client.post_order(signed, OrderType.FOK)
+
+        oid = resp.get("orderID", "")
+        if resp.get("success"):
+            print(f"    FILLED: {signal.bet_side} ${amount:.2f} id={oid[:16]}", flush=True)
+            return TradeResult(sd, f"BUY_{signal.bet_side}", amount, signal.market_price, oid, ts, "OK")
+        else:
+            err = resp.get("errorMsg", "rejected")
+            print(f"    REJECTED: {err}", flush=True)
+            return TradeResult(sd, "ERROR", 0, 0, "", ts, err)
     except Exception as e:
-        return TradeResult(
-            **base_result,
-            order_id="ERROR",
-            status="FAILED",
-            error=str(e),
-        )
+        print(f"    ERROR: {e}", flush=True)
+        return TradeResult(sd, "ERROR", 0, 0, "", ts, str(e))
 
 
-# === Main Trading Loop ===
+def run():
+    print("=" * 60, flush=True)
+    print("POLYMARKET WEATHER BOT", flush=True)
+    print(f"{datetime.utcnow().isoformat()} UTC", flush=True)
+    print(f"Mode: {'DRY RUN' if DRY_RUN else 'LIVE'}", flush=True)
+    print("=" * 60, flush=True)
 
-def run_trading(dry_run: bool = True) -> List[TradeResult]:
-    """
-    Full trading pipeline:
-    1. Scan markets for edge signals
-    2. Filter by risk management
-    3. Place orders (or dry run)
-    4. Report results
-    """
-    print(f"\n{'═' * 60}")
-    print(f"POLYMARKET WEATHER BOT — {'DRY RUN' if dry_run else 'LIVE TRADING'}")
-    print(f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
-    print(f"{'═' * 60}\n")
-    
-    # Init risk manager
-    risk = RiskManager()
-    print(f"Config: bet=${risk.bet_size}, budget=${risk.daily_budget}/day, min_edge={risk.min_edge}%")
-    
-    # Init CLOB client (None in dry run)
-    client = None
-    if not dry_run:
-        client = create_clob_client()
-        if client is None:
-            print("  Falling back to DRY RUN — no credentials")
-            dry_run = True
-    
-    # Step 1: Scan markets
-    print(f"\n📡 Scanning markets...")
+    # 1. Scan
+    print("\n[1/3] Scanning...", flush=True)
     markets = fetch_weather_markets()
     if not markets:
-        print("No markets found. Exiting.")
-        return []
-    
-    # Step 2: Find edge signals
-    print(f"\n🔍 Analyzing edge...")
-    signals = find_edge_signals(markets)
-    
+        print("No markets. Done.", flush=True)
+        return
+
+    # 2. Edge
+    print("\n[2/3] Finding edge...", flush=True)
+    signals = find_edge_signals(markets, min_edge=10.0)
+    from market_scanner import print_signals
+    print_signals(signals)
+
     if not signals:
-        print("No edge signals found. Market is efficient today.")
-        return []
-    
-    print(f"\n📊 Found {len(signals)} signals. Executing...")
-    
-    # Step 3: Execute trades
+        print("\nNo signals. Done.", flush=True)
+        return
+
+    # 3. Trade
+    print("\n[3/3] Executing...", flush=True)
+    signals = sorted(signals, key=lambda s: s.expected_value, reverse=True)
+
+    spent = load_daily_spent()
+    remaining = DAILY_BUDGET - spent
+    client = None if DRY_RUN else get_clob_client()
     results = []
-    
-    for signal in signals:
-        # Risk check
-        can_trade, reason = risk.can_trade(signal)
-        
-        if not can_trade:
-            print(f"  ⏭️ SKIP {signal.bet_side} {signal.bin_label} ({signal.market.city_id}): {reason}")
+    traded = 0
+
+    print(f"  Budget: ${remaining:.2f} remaining of ${DAILY_BUDGET:.2f}", flush=True)
+
+    for sig in signals:
+        if remaining < 1:
+            print("  Budget exhausted.", flush=True)
+            break
+        if abs(sig.edge) < MIN_EDGE or sig.expected_value < MIN_EV:
             continue
-        
-        # Execute
-        amount = risk.bet_size
-        result = place_order(client, signal, amount)
-        results.append(result)
-        
-        # Track spend
-        if result.status in ("SUCCESS", "DRY_RUN"):
-            risk.record_trade(signal, amount)
-        
-        # Log
-        emoji = {"SUCCESS": "✅", "DRY_RUN": "🔵", "FAILED": "❌"}[result.status]
-        print(
-            f"  {emoji} {result.status} | {result.bet_side} {result.signal_bin} "
-            f"({result.city}) | ${amount:.2f} | "
-            f"model={result.model_prob:.0%} market={result.price:.0%} edge={result.edge:+.0f}%"
-        )
-        if result.error:
-            print(f"     Error: {result.error}")
-        
-        time.sleep(1)  # Rate limit between orders
-    
-    # Summary
-    print(f"\n{'─' * 60}")
-    successes = [r for r in results if r.status in ("SUCCESS", "DRY_RUN")]
-    failures = [r for r in results if r.status == "FAILED"]
-    total_spent = sum(r.amount for r in successes)
-    avg_ev = sum(r.ev for r in successes) / len(successes) if successes else 0
-    
-    print(f"Executed: {len(successes)} trades, ${total_spent:.2f} deployed")
-    if failures:
-        print(f"Failed: {len(failures)} trades")
-    print(f"Avg EV: {avg_ev:+.3f} per $1")
-    print(f"Budget remaining: ${risk.daily_budget - risk.spent_today:.2f}")
-    
-    return results
 
+        bet = min(MAX_BET * min(abs(sig.edge) / 30, 1.0), remaining)
+        bet = round(bet, 2)
+        if bet < 0.50:
+            continue
 
-def save_trade_log(results: List[TradeResult], path: str = "trade_log.json"):
-    """Append results to trade log."""
-    # Load existing
-    existing = []
-    try:
-        with open(path) as f:
-            existing = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    
-    # Append new
-    for r in results:
-        existing.append(asdict(r))
-    
-    # Save (keep last 500)
-    existing = existing[-500:]
-    with open(path, "w") as f:
-        json.dump(existing, f, indent=2)
-    
-    print(f"Trade log saved: {len(results)} new entries → {path}")
+        print(f"\n  {sig.bet_side} {sig.bin_label} | edge={sig.edge:+.1f}% EV={sig.expected_value:.3f} bet=${bet:.2f}", flush=True)
+        print(f"    {sig.market.question[:70]}", flush=True)
+
+        r = place_order(client, sig, bet)
+        results.append(r)
+        if r.action not in ("ERROR",):
+            remaining -= bet
+            spent += bet
+            traded += 1
+        time.sleep(1)
+
+    save_daily(spent, [asdict(r) for r in results])
+    print(f"\n  Trades: {traded} | Spent today: ${spent:.2f}", flush=True)
+    print("=" * 60, flush=True)
 
 
 if __name__ == "__main__":
-    import sys
-    
-    # Default: dry run. Pass --live for real trading.
-    live = "--live" in sys.argv
-    
-    if live and not os.getenv("POLY_PRIVATE_KEY"):
-        print("❌ --live requires POLY_PRIVATE_KEY, POLY_FUNDER env vars")
-        sys.exit(1)
-    
-    results = run_trading(dry_run=not live)
-    if results:
-        save_trade_log(results)
+    run()

@@ -1,19 +1,30 @@
-name: Weather Trading Bot
+name: Weather Bot — Trade
 
 on:
   schedule:
-    # Run every 6 hours aligned with model updates: 00:30, 06:30, 12:30, 18:30 UTC
     - cron: '30 0,6,12,18 * * *'
   workflow_dispatch:
     inputs:
-      mode:
-        description: 'Trading mode'
+      dry_run:
+        description: 'Dry run (no real orders)'
         required: false
-        default: 'dry_run'
+        default: 'true'
         type: choice
         options:
-          - dry_run
-          - live
+          - 'true'
+          - 'false'
+      max_bet:
+        description: 'Max bet per trade ($)'
+        required: false
+        default: '5'
+      daily_budget:
+        description: 'Daily budget ($)'
+        required: false
+        default: '50'
+
+concurrency:
+  group: weather-trader
+  cancel-in-progress: false
 
 jobs:
   trade:
@@ -23,41 +34,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install requests py-clob-client
+      - run: pip install requests py-clob-client
 
-      - name: Run trading bot
+      - name: Download daily state
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: daily-state
+          path: .
+          if_no_artifact_found: warn
+          search_artifacts: true
+          workflow: trade.yml
+        continue-on-error: true
+
+      - name: Run trader
         env:
+          DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          MAX_BET: ${{ inputs.max_bet || '5' }}
+          DAILY_BUDGET: ${{ inputs.daily_budget || '50' }}
+          MIN_EDGE: '15'
+          MIN_EV: '0.10'
           POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
           POLY_FUNDER: ${{ secrets.POLY_FUNDER }}
           POLY_SIG_TYPE: ${{ secrets.POLY_SIG_TYPE }}
-          BET_SIZE: "2"
-          DAILY_BUDGET: "20"
-          MIN_TRADE_EDGE: "15"
-        run: |
-          MODE="${{ inputs.mode }}"
-          MODE="${MODE:-dry_run}"
-          
-          if [ "$MODE" = "live" ]; then
-            echo "🔴 LIVE TRADING MODE"
-            python trader.py --live 2>&1 | tee trade_output.txt
-          else
-            echo "🔵 DRY RUN MODE"
-            python trader.py 2>&1 | tee trade_output.txt
-          fi
+        run: python trader.py 2>&1 | tee trade_output.txt
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trade-${{ github.run_number }}
+          name: daily-state
           path: |
             trade_output.txt
-            trade_log.json
+            daily_trades.json
             live_signals.json
           retention-days: 30
+          overwrite: true
