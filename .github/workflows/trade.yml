@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install requests py-clob-client
+      - run: pip install requests py-clob-client PySocks
 
       - name: Download daily state
         uses: dawidd6/action-download-artifact@v6
@@ -60,6 +60,7 @@ jobs:
           POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
           POLY_FUNDER: ${{ secrets.POLY_FUNDER }}
           POLY_SIG_TYPE: ${{ secrets.POLY_SIG_TYPE }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
         run: python trader.py 2>&1 | tee trade_output.txt
 
       - name: Upload results

@@ -8,6 +8,7 @@ Env vars:
   POLY_PRIVATE_KEY  — Polygon wallet private key
   POLY_FUNDER       — Polymarket proxy/funder address
   POLY_SIG_TYPE     — 0=EOA, 1=email/Magic, 2=browser proxy
+  PROXY_URL         — SOCKS5/HTTPS proxy (e.g. socks5://user:pass@ip:port)
   DRY_RUN           — "true" = no real orders (default)
   MAX_BET           — $ per trade (default 5)
   DAILY_BUDGET      — $ max per day (default 50)
@@ -19,6 +20,13 @@ import time
 from datetime import datetime, date
 from dataclasses import dataclass, asdict
 from typing import List
+
+# === Set proxy BEFORE any imports that use requests ===
+PROXY_URL = os.getenv("PROXY_URL", "")
+if PROXY_URL:
+    os.environ["HTTP_PROXY"] = PROXY_URL
+    os.environ["HTTPS_PROXY"] = PROXY_URL
+    print(f"  Proxy: {PROXY_URL.split('@')[-1] if '@' in PROXY_URL else PROXY_URL[:30]}...", flush=True)
 
 from market_scanner import EdgeSignal, fetch_weather_markets, find_edge_signals
 
@@ -162,9 +170,13 @@ def run():
 
     print(f"  Budget: ${remaining:.2f} remaining of ${DAILY_BUDGET:.2f}", flush=True)
 
+    consecutive_errors = 0
     for sig in signals:
         if remaining < 1:
             print("  Budget exhausted.", flush=True)
+            break
+        if consecutive_errors >= 3:
+            print("  3 consecutive errors — stopping (likely geoblock or auth issue).", flush=True)
             break
         if abs(sig.edge) < MIN_EDGE or sig.expected_value < MIN_EV:
             continue
@@ -179,11 +191,13 @@ def run():
 
         r = place_order(client, sig, bet)
         results.append(r)
-        # Only count real fills toward budget, not dry runs or errors
         if r.action.startswith("BUY_"):
             remaining -= bet
             spent += bet
             traded += 1
+            consecutive_errors = 0
+        elif r.action == "ERROR":
+            consecutive_errors += 1
         time.sleep(1)
 
     # Only persist daily state for live runs
