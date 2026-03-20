@@ -16,7 +16,7 @@ import re
 import json
 import time
 import requests
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 
@@ -151,31 +151,40 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     events_url = f"{GAMMA_API_URL}/events"
     data = []
 
-    # Fetch only 10 events at a time — each has ~11 bins = ~110 markets
-    # For live trading we only need tomorrow across ~10 cities
-    try:
-        params = {
-            "limit": 10,
-            "active": "true",
-            "closed": "false",
-            "tag_slug": "temperature",
-        }
-        resp = requests.get(events_url, params=params, timeout=60)
-        resp.raise_for_status()
-        events = resp.json()
+    # Fetch temperature events in batches to find active (non-closed) markets
+    # Today's may be closed, so we need enough to reach tomorrow's
+    for offset in range(0, 100, 20):
+        try:
+            params = {
+                "limit": 20,
+                "offset": offset,
+                "active": "true",
+                "closed": "false",
+                "tag_slug": "temperature",
+            }
+            resp = requests.get(events_url, params=params, timeout=60)
+            resp.raise_for_status()
+            events = resp.json()
+            if not events:
+                break
 
-        for event in events:
-            title = event.get("title", "")
-            event_markets = event.get("markets", [])
-            for m in event_markets:
-                if not m.get("question"):
-                    m["question"] = title
-                m["_event_title"] = title
-                data.append(m)
+            for event in events:
+                title = event.get("title", "")
+                event_markets = event.get("markets", [])
+                for m in event_markets:
+                    if not m.get("question"):
+                        m["question"] = title
+                    m["_event_title"] = title
+                    data.append(m)
 
-        print(f"  Fetched {len(events)} events, {len(data)} markets", flush=True)
-    except Exception as e:
-        print(f"  Error: {e}", flush=True)
+            print(f"  Page {offset//20 + 1}: {len(events)} events, {len(data)} markets", flush=True)
+
+            if len(events) < 20:
+                break
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  Error at offset {offset}: {e}", flush=True)
+            break
 
     print(f"  Total: {len(data)} temperature markets found")
 
@@ -209,6 +218,27 @@ def fetch_weather_markets() -> List[WeatherMarket]:
         if target_date < date.today():
             past_dates += 1
             continue
+
+        # Skip closed markets (endDate passed, no more trading)
+        is_closed = m.get("closed")
+        if isinstance(is_closed, str):
+            is_closed = is_closed.lower() == "true"
+        if is_closed:
+            past_dates += 1
+            continue
+
+        # Skip markets closing within 2 hours (orderbook may be gone)
+        end_date_str = m.get("endDate", "")
+        if end_date_str:
+            try:
+                end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                hours_left = (end_dt - now).total_seconds() / 3600
+                if hours_left < 2:
+                    past_dates += 1
+                    continue
+            except (ValueError, TypeError):
+                pass
 
         # Parse outcomes (can be JSON string)
         outcomes = m.get("outcomes", [])
