@@ -151,40 +151,31 @@ def fetch_weather_markets() -> List[WeatherMarket]:
     events_url = f"{GAMMA_API_URL}/events"
     data = []
 
-    # tag_slug=temperature returns daily temperature events
-    # Each event has ~11 market bins, so 50 events = ~550 markets
-    for offset in range(0, 200, 50):
-        try:
-            params = {
-                "limit": 50,
-                "offset": offset,
-                "active": "true",
-                "closed": "false",
-                "tag_slug": "temperature",
-            }
-            resp = requests.get(events_url, params=params, timeout=60)
-            resp.raise_for_status()
-            events = resp.json()
-            if not events:
-                break
+    # Fetch only 10 events at a time — each has ~11 bins = ~110 markets
+    # For live trading we only need tomorrow across ~10 cities
+    try:
+        params = {
+            "limit": 10,
+            "active": "true",
+            "closed": "false",
+            "tag_slug": "temperature",
+        }
+        resp = requests.get(events_url, params=params, timeout=60)
+        resp.raise_for_status()
+        events = resp.json()
 
-            for event in events:
-                title = event.get("title", "")
-                event_markets = event.get("markets", [])
-                for m in event_markets:
-                    if not m.get("question"):
-                        m["question"] = title
-                    m["_event_title"] = title
-                    data.append(m)
+        for event in events:
+            title = event.get("title", "")
+            event_markets = event.get("markets", [])
+            for m in event_markets:
+                if not m.get("question"):
+                    m["question"] = title
+                m["_event_title"] = title
+                data.append(m)
 
-            print(f"  Page {offset//50 + 1}: {len(events)} events, {len(data)} markets total", flush=True)
-
-            if len(events) < 50:
-                break
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"  Error at offset {offset}: {e}", flush=True)
-            break
+        print(f"  Fetched {len(events)} events, {len(data)} markets", flush=True)
+    except Exception as e:
+        print(f"  Error: {e}", flush=True)
 
     print(f"  Total: {len(data)} temperature markets found")
 
