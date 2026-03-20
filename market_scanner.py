@@ -142,167 +142,91 @@ def match_city(question: str) -> Optional[str]:
 def fetch_weather_markets() -> List[WeatherMarket]:
     """
     Fetch active weather/temperature markets from Polymarket Gamma API.
-    Returns parsed markets with bin prices.
+    
+    Approach: paginate /events, filter by title keywords, collect markets.
+    Weather events have titles like "Highest temperature in NYC on March 18?"
     """
     print("Fetching weather markets from Polymarket...")
 
-    url = f"{GAMMA_API_URL}/markets"
-    markets = []
-
-    weather_keywords = [
-        "temperature", "highest temp", "lowest temp",
-        "°f", "°c", "fahrenheit", "celsius",
-        "weather forecast", "rainfall",
-    ]
-    # More precise: regex patterns for market titles
     import re as _re
+
     weather_patterns = [
         r"highest temperature in",
         r"lowest temperature in",
-        r"temperature.*on\s+(january|february|march|april|may|june|july|august|september|october|november|december)",
-        r"\d+°[fc]",
+        r"temperature .* on .*(january|february|march|april|may|june|july|august|september|october|november|december)",
+        r"\d+\s*°[fc].*higher",
+        r"will the .* temperature",
     ]
 
-    def _is_weather(text: str) -> bool:
-        t = text.lower()
-        if any(kw in t for kw in weather_keywords):
-            return True
-        if any(_re.search(p, t) for p in weather_patterns):
-            return True
-        return False
+    def _is_weather_event(title: str) -> bool:
+        t = title.lower()
+        return any(_re.search(p, t) for p in weather_patterns)
 
-    # === Strategy 1: Tag-based search (most reliable) ===
-    data = []
-    
-    print("  Trying tag-based search...")
     events_url = f"{GAMMA_API_URL}/events"
-    
-    # Try different tags Polymarket might use
-    for tag in ["temperature", "weather", "daily-temperature"]:
+    data = []
+    weather_event_count = 0
+
+    for offset in range(0, 3000, 100):
         try:
             params = {
                 "limit": 100,
+                "offset": offset,
                 "active": "true",
                 "closed": "false",
-                "tag": tag,
             }
             resp = requests.get(events_url, params=params, timeout=30)
             resp.raise_for_status()
             events = resp.json()
-            if events:
-                print(f"    Tag '{tag}': {len(events)} events")
-                for event in events:
+            if not events:
+                break
+
+            for event in events:
+                title = event.get("title", "")
+                if _is_weather_event(title):
+                    weather_event_count += 1
                     event_markets = event.get("markets", [])
-                    title = event.get("title", "")
                     for m in event_markets:
                         if not m.get("question"):
                             m["question"] = title
                         m["_event_title"] = title
                         data.append(m)
-            time.sleep(0.3)
+
+            if len(data) >= 200:
+                break
+            if len(events) < 100:
+                break
+            time.sleep(0.2)
         except Exception as e:
-            print(f"    Tag '{tag}' error: {e}")
-    
-    print(f"  Tag search found {len(data)} markets")
+            print(f"  Error at offset {offset}: {e}")
+            break
 
-    # === Strategy 2: Keyword search via /events ===
-    if len(data) < 5:
-        print("  Trying keyword search in /events...")
-        for offset in range(0, 1000, 100):
-            try:
-                params = {
-                    "limit": 100,
-                    "offset": offset,
-                    "active": "true",
-                    "closed": "false",
-                }
-                resp = requests.get(events_url, params=params, timeout=30)
-                resp.raise_for_status()
-                events = resp.json()
-                if not events:
-                    break
+    print(f"  Scanned events up to offset {offset}")
+    print(f"  Weather events: {weather_event_count}, markets: {len(data)}")
 
-                for event in events:
-                    title = event.get("title", "")
-                    if _is_weather(title):
-                        event_markets = event.get("markets", [])
-                        for m in event_markets:
-                            if not m.get("question"):
-                                m["question"] = title
-                            m["_event_title"] = title
-                            data.append(m)
+    if not data:
+        print("  No weather events found. Showing sample of what API returns:")
+        try:
+            resp = requests.get(events_url, params={"limit": 5, "active": "true"}, timeout=30)
+            for e in resp.json()[:5]:
+                print(f"    '{e.get('title', 'N/A')[:80]}'")
+        except:
+            pass
 
-                if len(data) >= 50:
-                    break
-                if len(events) < 100:
-                    break
-                time.sleep(0.3)
-            except Exception as e:
-                print(f"    Events error at offset {offset}: {e}")
-                break
-
-        print(f"  Keyword search found {len(data)} weather markets")
-
-    # === Strategy 3: Fallback — /markets with keyword search ===
-    if len(data) < 5:
-        print("  Falling back to /markets keyword search...")
-        total_scanned = 0
-        for offset in range(0, 500, 100):
-            try:
-                params = {
-                    "limit": 100,
-                    "offset": offset,
-                    "active": "true",
-                    "closed": "false",
-                }
-                resp = requests.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                batch = resp.json()
-                if not batch:
-                    break
-
-                total_scanned += len(batch)
-
-                # Debug: dump first batch questions
-                if offset == 0:
-                    print(f"  DEBUG — First 5 raw market questions:")
-                    for i, m in enumerate(batch[:5]):
-                        q = m.get("question", "NO_QUESTION")
-                        keys = list(m.keys())[:8]
-                        print(f"    [{i}] q='{q[:80]}' keys={keys}")
-
-                weather_batch = [m for m in batch if _is_weather(m.get("question", ""))]
-                data.extend(weather_batch)
-
-                if len(data) >= 50 or len(batch) < 100:
-                    break
-                time.sleep(0.3)
-            except Exception as e:
-                print(f"    Error at offset {offset}: {e}")
-                break
-        print(f"  Scanned {total_scanned} markets, found {len(data)} weather")
-
-    # Debug: show first 15 market questions to understand format
-    print(f"\n  DEBUG — Sample market questions:")
-    for i, m in enumerate(data[:15]):
-        q = m.get("question", "N/A")
-        print(f"    [{i}] {q}")
-    print()
-
-    unmatched_cities = 0
-    unmatched_dates = 0
+    markets = []
+    unmatched_city = 0
+    unmatched_date = 0
     past_dates = 0
 
     for m in data:
         question = m.get("question", "")
         city_id = match_city(question)
         if not city_id:
-            unmatched_cities += 1
+            unmatched_city += 1
             continue
 
         target_date = parse_date_from_question(question)
         if not target_date:
-            unmatched_dates += 1
+            unmatched_date += 1
             continue
 
         # Skip markets that already resolved
@@ -367,8 +291,8 @@ def fetch_weather_markets() -> List[WeatherMarket]:
         ))
 
     print(f"\n  DEBUG — Filtering summary:")
-    print(f"    Unmatched city: {unmatched_cities}")
-    print(f"    Unmatched date: {unmatched_dates}")
+    print(f"    Unmatched city: {unmatched_city}")
+    print(f"    Unmatched date: {unmatched_date}")
     print(f"    Past dates: {past_dates}")
     print(f"  Matched {len(markets)} markets to supported cities")
     return markets
