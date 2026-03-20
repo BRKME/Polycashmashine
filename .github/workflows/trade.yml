@@ -1,0 +1,63 @@
+name: Weather Trading Bot
+
+on:
+  schedule:
+    # Run every 6 hours aligned with model updates: 00:30, 06:30, 12:30, 18:30 UTC
+    - cron: '30 0,6,12,18 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Trading mode'
+        required: false
+        default: 'dry_run'
+        type: choice
+        options:
+          - dry_run
+          - live
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests py-clob-client
+
+      - name: Run trading bot
+        env:
+          POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
+          POLY_FUNDER: ${{ secrets.POLY_FUNDER }}
+          POLY_SIG_TYPE: ${{ secrets.POLY_SIG_TYPE }}
+          BET_SIZE: "2"
+          DAILY_BUDGET: "20"
+          MIN_TRADE_EDGE: "15"
+        run: |
+          MODE="${{ inputs.mode }}"
+          MODE="${MODE:-dry_run}"
+          
+          if [ "$MODE" = "live" ]; then
+            echo "🔴 LIVE TRADING MODE"
+            python trader.py --live 2>&1 | tee trade_output.txt
+          else
+            echo "🔵 DRY RUN MODE"
+            python trader.py 2>&1 | tee trade_output.txt
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trade-${{ github.run_number }}
+          path: |
+            trade_output.txt
+            trade_log.json
+            live_signals.json
+          retention-days: 30

@@ -31,7 +31,9 @@ python backtest.py nyc london tel_aviv
 
 ```
 weather_model.py    — ансамблевые прогнозы → вероятности по температурным бинам
-backtest.py         — исторический бэктест (модель vs наивная оценка)
+market_scanner.py   — Polymarket API → реальные цены → edge сигналы
+trader.py           — risk management → CLOB API → размещение ордеров
+backtest.py         — исторический бэктест (модель vs рынок)
 config.py           — города, пороги, API endpoints
 ```
 
@@ -47,9 +49,30 @@ config.py           — города, пороги, API endpoints
 ## Фазы
 
 - [x] Phase 1: Weather model + бэктест (v3 — 71% hit rate, +$170/60 дней)
-- [x] Phase 2: Live market scanner (реальные цены Polymarket)
-- [ ] Phase 3: Auto-trade через py-clob-client
-- [ ] Phase 4: GitHub Actions (каждые 6 часов по обновлению моделей)
+- [x] Phase 2: Live market scanner (реальные цены Polymarket, avg edge +26.7%)
+- [x] Phase 3: Auto-trade через py-clob-client
+- [ ] Phase 4: Production hardening (Telegram alerts, P&L tracking)
+
+## Auto-Trade
+
+```bash
+# Dry run (по умолчанию) — показывает что бы сделал, но не торгует
+python trader.py
+
+# Live trading — размещает реальные ордера
+python trader.py --live
+```
+
+**Для live trading нужны GitHub Secrets:**
+- `POLY_PRIVATE_KEY` — приватный ключ Polygon кошелька
+- `POLY_FUNDER` — адрес Polymarket proxy/funder
+- `POLY_SIG_TYPE` — тип подписи (0=EOA, 1=email, 2=browser)
+
+**Risk management:**
+- $2 за ставку (настраивается BET_SIZE)
+- $20 дневной лимит (DAILY_BUDGET)
+- Минимум 15% edge (MIN_TRADE_EDGE)
+- Макс 3 ставки на город в день
 
 ## Лицензия
 

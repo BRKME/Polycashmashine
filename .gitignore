@@ -3,5 +3,6 @@ __pycache__/
 .env
 backtest_results.json
 live_signals.json
+trade_log.json
 *.db
 .pytest_cache/
