@@ -144,7 +144,10 @@ def run():
     print("\n[3/3] Executing...", flush=True)
     signals = sorted(signals, key=lambda s: s.expected_value, reverse=True)
 
-    spent = load_daily_spent()
+    # Only load daily spent from LIVE trades (ignore dry-run history)
+    spent = 0.0
+    if not DRY_RUN:
+        spent = load_daily_spent()
     remaining = DAILY_BUDGET - spent
     client = None if DRY_RUN else get_clob_client()
     results = []
@@ -169,13 +172,16 @@ def run():
 
         r = place_order(client, sig, bet)
         results.append(r)
-        if r.action not in ("ERROR",):
+        # Only count real fills toward budget, not dry runs or errors
+        if r.action.startswith("BUY_"):
             remaining -= bet
             spent += bet
             traded += 1
         time.sleep(1)
 
-    save_daily(spent, [asdict(r) for r in results])
+    # Only persist daily state for live runs
+    if not DRY_RUN:
+        save_daily(spent, [asdict(r) for r in results if r.action.startswith("BUY_")])
     print(f"\n  Trades: {traded} | Spent today: ${spent:.2f}", flush=True)
     print("=" * 60, flush=True)
 
