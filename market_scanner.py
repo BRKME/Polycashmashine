@@ -423,7 +423,9 @@ def find_edge_signals(
             edge = (model_prob - yes_price) * 100
 
             # === YES signal: model more confident than market ===
-            if edge >= min_edge and model_prob >= 0.25 and cluster_prob >= 0.55:
+            # Require market_price >= 10¢ to avoid low-liquidity tail bets
+            if (edge >= min_edge and model_prob >= 0.25 
+                    and cluster_prob >= 0.55 and yes_price >= 0.10):
                 ev = model_prob * (1 - yes_price) - (1 - model_prob) * yes_price
                 token_id = market.bins[0].token_id if market.bins else ""
                 signals.append(EdgeSignal(
@@ -453,6 +455,29 @@ def find_edge_signals(
                     bet_side="NO",
                     expected_value=ev,
                 ))
+
+    # === Dedup: only best YES and best NO per (city, date) ===
+    # Multiple YES on same city/date conflict — only one can win
+    # Multiple NO on same city/date is wasteful — keep highest EV
+    best_yes = {}
+    best_no = {}
+    for s in signals:
+        key = (s.market.city_id, s.market.target_date)
+        if s.bet_side == "YES":
+            if key not in best_yes or s.expected_value > best_yes[key].expected_value:
+                best_yes[key] = s
+        else:
+            if key not in best_no or s.expected_value > best_no[key].expected_value:
+                best_no[key] = s
+
+    deduped = list(best_yes.values()) + list(best_no.values())
+    removed = len(signals) - len(deduped)
+    if removed > 0:
+        print(f"\n  Dedup: best per (city,date,side), removed {removed} duplicates")
+
+    signals = deduped
+
+    signals = deduped
 
     # Sort by absolute edge
     signals.sort(key=lambda s: abs(s.edge), reverse=True)

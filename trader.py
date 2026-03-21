@@ -33,6 +33,7 @@ from market_scanner import EdgeSignal, fetch_weather_markets, find_edge_signals
 
 MAX_BET = float(os.getenv("MAX_BET", "5"))
 DAILY_BUDGET = float(os.getenv("DAILY_BUDGET", "50"))
+MAX_TRADES = int(os.getenv("MAX_TRADES", "6"))  # Max trades per run
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 MIN_EDGE = float(os.getenv("MIN_EDGE", "15"))
 MIN_EV = float(os.getenv("MIN_EV", "0.10"))
@@ -179,8 +180,11 @@ def run():
         if remaining < 1:
             print("  Budget exhausted.", flush=True)
             break
+        if traded >= MAX_TRADES:
+            print(f"  Max trades ({MAX_TRADES}) reached.", flush=True)
+            break
         if consecutive_errors >= 3:
-            print("  3 consecutive errors — stopping (likely geoblock or auth issue).", flush=True)
+            print("  3 consecutive errors — stopping.", flush=True)
             break
         if abs(sig.edge) < MIN_EDGE or sig.expected_value < MIN_EV:
             continue
