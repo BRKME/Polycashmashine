@@ -133,6 +133,121 @@ def place_order(client, signal, amount):
         return TradeResult(sd, "ERROR", 0, 0, "", ts, str(e))
 
 
+def kelly_bet(signal, max_bet):
+    """
+    Kelly-criterion inspired bet sizing.
+    
+    Bet size scales with:
+    1. Edge strength (higher edge = more confident)
+    2. Model probability (mid-range 30-70% = most reliable)
+    3. Cluster probability (higher = more confident in neighborhood)
+    
+    Half-Kelly for safety (never bet full Kelly).
+    """
+    edge_frac = abs(signal.edge) / 100  # e.g. 0.50 for 50% edge
+    model_p = signal.model_prob
+    cluster_p = signal.cluster_prob
+
+    # Kelly fraction: edge / odds
+    # For binary markets: kelly = model_prob - market_price
+    if signal.bet_side == "YES":
+        kelly = model_p - signal.market_price
+    else:
+        kelly = (1 - model_p) - (1 - signal.market_price)
+
+    kelly = max(kelly, 0)
+
+    # Confidence multiplier based on cluster probability
+    if cluster_p >= 0.90:
+        conf = 1.0       # High confidence: full half-Kelly
+    elif cluster_p >= 0.70:
+        conf = 0.7        # Medium: 70% of half-Kelly
+    else:
+        conf = 0.4        # Low: 40% of half-Kelly
+
+    # Half-Kelly * confidence * max_bet
+    bet = max_bet * kelly * 2.0 * conf  # kelly*2 because kelly is usually small
+
+    # Clamp
+    bet = max(1.0, min(bet, max_bet))
+    return bet
+
+
+TRADE_HISTORY_FILE = "trade_history.json"
+
+def log_trade(signal, amount, result):
+    """Append trade to persistent history for performance tracking."""
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "city": signal.market.city_id,
+        "date": str(signal.market.target_date),
+        "bin": signal.bin_label,
+        "side": signal.bet_side,
+        "model_prob": round(signal.model_prob, 3),
+        "market_price": round(signal.market_price, 3),
+        "edge": round(signal.edge, 1),
+        "cluster_prob": round(signal.cluster_prob, 3),
+        "ev": round(signal.expected_value, 3),
+        "amount": amount,
+        "order_id": result.order_id[:20] if result.order_id else "",
+        "question": signal.market.question[:80],
+    }
+
+    history = []
+    try:
+        with open(TRADE_HISTORY_FILE) as f:
+            history = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    history.append(entry)
+
+    # Keep last 500 trades
+    if len(history) > 500:
+        history = history[-500:]
+
+    with open(TRADE_HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+
+def print_history_stats():
+    """Print performance summary from trade history."""
+    try:
+        with open(TRADE_HISTORY_FILE) as f:
+            history = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+
+    if not history:
+        return
+
+    total = len(history)
+    total_bet = sum(t["amount"] for t in history)
+    avg_edge = sum(t["edge"] for t in history) / total
+    avg_ev = sum(t["ev"] for t in history) / total
+
+    # By side
+    yes_trades = [t for t in history if t["side"] == "YES"]
+    no_trades = [t for t in history if t["side"] == "NO"]
+
+    # By city
+    cities = {}
+    for t in history:
+        c = t["city"]
+        if c not in cities:
+            cities[c] = {"count": 0, "total": 0}
+        cities[c]["count"] += 1
+        cities[c]["total"] += t["amount"]
+
+    city_str = ", ".join(f"{c}({v['count']})" for c, v in sorted(cities.items()))
+    print(f"\n{'─' * 50}", flush=True)
+    print(f"TRADE HISTORY ({total} trades, ${total_bet:.2f} total)", flush=True)
+    print(f"  YES: {len(yes_trades)} | NO: {len(no_trades)}", flush=True)
+    print(f"  Avg edge: {avg_edge:+.1f}% | Avg EV: {avg_ev:.3f}", flush=True)
+    print(f"  Cities: {city_str}", flush=True)
+    print(f"{'─' * 50}", flush=True)
+
+
 def run():
     print("=" * 60, flush=True)
     print("POLYMARKET WEATHER BOT", flush=True)
@@ -189,12 +304,14 @@ def run():
         if abs(sig.edge) < MIN_EDGE or sig.expected_value < MIN_EV:
             continue
 
-        bet = min(MAX_BET * min(abs(sig.edge) / 30, 1.0), remaining)
+        bet = kelly_bet(sig, MAX_BET)
+        bet = min(bet, remaining)
         bet = round(bet, 2)
-        if bet < 0.50:
+        if bet < 1.00:
             continue
 
-        print(f"\n  {sig.bet_side} {sig.bin_label} | edge={sig.edge:+.1f}% EV={sig.expected_value:.3f} bet=${bet:.2f}", flush=True)
+        confidence = "HIGH" if sig.cluster_prob >= 0.90 else "MED" if sig.cluster_prob >= 0.70 else "LOW"
+        print(f"\n  {sig.bet_side} {sig.bin_label} | edge={sig.edge:+.1f}% EV={sig.expected_value:.3f} conf={confidence} bet=${bet:.2f}", flush=True)
         print(f"    {sig.market.question[:70]}", flush=True)
 
         r = place_order(client, sig, bet)
@@ -204,6 +321,8 @@ def run():
             spent += bet
             traded += 1
             consecutive_errors = 0
+            # Log to persistent history
+            log_trade(sig, bet, r)
         elif r.action == "ERROR":
             consecutive_errors += 1
         time.sleep(1)
@@ -212,6 +331,9 @@ def run():
     if not DRY_RUN:
         save_daily(spent, [asdict(r) for r in results if r.action.startswith("BUY_")])
     print(f"\n  Trades: {traded} | Spent today: ${spent:.2f}", flush=True)
+
+    # Print performance history
+    print_history_stats()
     print("=" * 60, flush=True)
 
 
