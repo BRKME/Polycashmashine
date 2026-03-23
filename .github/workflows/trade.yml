@@ -53,7 +53,7 @@ jobs:
       - name: Run trader
         env:
           # Scheduled runs = live trading; manual = uses input (default false)
-          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          DRY_RUN: ${{ inputs.dry_run || 'true' }}
           MAX_BET: ${{ inputs.max_bet || '5' }}
           DAILY_BUDGET: ${{ inputs.daily_budget || '30' }}
           MAX_TRADES: '5'
