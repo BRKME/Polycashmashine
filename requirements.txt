@@ -3,4 +3,3 @@ requests[socks]>=2.31.0
 py-clob-client>=0.1.0
 PySocks>=1.7.0
 httpx[socks]>=0.24.0
-web3>=6.0.0

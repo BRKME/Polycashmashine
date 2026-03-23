@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install requests py-clob-client PySocks "httpx[socks]" web3
+      - run: pip install requests py-clob-client PySocks "httpx[socks]"
 
       - name: Download daily state
         uses: dawidd6/action-download-artifact@v6
@@ -48,15 +48,6 @@ jobs:
           if_no_artifact_found: warn
           search_artifacts: true
           workflow: trade.yml
-        continue-on-error: true
-
-      - name: Auto-redeem winnings
-        env:
-          POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
-          POLY_FUNDER: ${{ secrets.POLY_FUNDER }}
-          POLY_SIG_TYPE: ${{ secrets.POLY_SIG_TYPE }}
-          PROXY_URL: ${{ secrets.PROXY_URL }}
-        run: python redeemer.py 2>&1 | tee -a trade_output.txt
         continue-on-error: true
 
       - name: Run trader
