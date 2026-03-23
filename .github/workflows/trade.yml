@@ -50,6 +50,16 @@ jobs:
           workflow: trade.yml
         continue-on-error: true
 
+      - name: Download calibration (fallback)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: calibration
+          path: .
+          if_no_artifact_found: warn
+          search_artifacts: true
+          workflow: calibrate.yml
+        continue-on-error: true
+
       - name: Run trader
         env:
           # Scheduled runs = live trading; manual = uses input (default false)

@@ -169,28 +169,46 @@ def fetch_ensemble_forecast(
     mean_temp = statistics.mean(member_values)
     raw_std = statistics.stdev(member_values) if len(member_values) > 1 else 1.0
 
-    # === CRITICAL: widen std to account for ensemble underdispersion ===
-    # Raw ensemble std is typically 0.4-0.8°C but real forecast error is 1.5-3°C
-    # Apply minimum floor + multiplier based on forecast horizon
-    days_ahead = (target_date - date.today()).days
-    if city["unit"] == "fahrenheit":
-        min_std = 2.5  # °F minimum
-        horizon_add = days_ahead * 0.8  # additional uncertainty per day
-    else:
-        min_std = 1.5  # °C minimum
-        horizon_add = days_ahead * 0.5
+    # === Load calibration data if available ===
+    cal_bias = 0.0
+    cal_std = None
+    try:
+        import json as _json
+        with open("calibration.json") as f:
+            cal_data = _json.load(f)
+        city_cal = cal_data.get("cities", {}).get(city_id)
+        if city_cal:
+            cal_bias = city_cal.get("bias", 0.0)
+            cal_std = city_cal.get("real_std", None)
+    except (FileNotFoundError, Exception):
+        pass
 
-    adjusted_std = max(raw_std * 2.5, min_std) + horizon_add
+    # Apply bias correction: if model runs hot by +1.2°C, shift down
+    corrected_mean = mean_temp - cal_bias
+
+    # Use calibrated std if available, otherwise fallback to heuristic
+    days_ahead = (target_date - date.today()).days
+    if cal_std and cal_std > 0:
+        # Real std from historical forecast errors + horizon scaling
+        adjusted_std = cal_std * (1 + 0.3 * max(days_ahead - 1, 0))
+    else:
+        # Fallback: heuristic widening (no calibration data)
+        if city["unit"] == "fahrenheit":
+            min_std = 2.5
+            horizon_add = days_ahead * 0.8
+        else:
+            min_std = 1.5
+            horizon_add = days_ahead * 0.5
+        adjusted_std = max(raw_std * 2.5, min_std) + horizon_add
 
     # Build temperature bins
     bins_def = make_temperature_bins(
-        center=mean_temp,
+        center=corrected_mean,  # Use bias-corrected mean
         unit=city["unit"],
         bin_width=city["bin_width"],
     )
 
-    # === Use Gaussian CDF instead of raw count/N ===
-    # This produces calibrated probabilities from the ensemble mean+std
+    # === Gaussian CDF for bin probabilities ===
     from math import erf, sqrt
     def normal_cdf(x, mu, sigma):
         return 0.5 * (1 + erf((x - mu) / (sigma * sqrt(2))))
@@ -198,9 +216,8 @@ def fetch_ensemble_forecast(
     total = len(member_values)
     bin_results = []
     for low, high, label in bins_def:
-        prob = normal_cdf(high, mean_temp, adjusted_std) - normal_cdf(low, mean_temp, adjusted_std)
-        prob = max(prob, 0.001)  # Never truly 0%
-        # Count is kept for debugging but probability comes from Gaussian
+        prob = normal_cdf(high, corrected_mean, adjusted_std) - normal_cdf(low, corrected_mean, adjusted_std)
+        prob = max(prob, 0.001)  # Floor at 0.1%
         count = sum(1 for v in member_values if low <= v <= high)
         bin_results.append(BinProbability(
             bin_low=low,
@@ -216,8 +233,8 @@ def fetch_ensemble_forecast(
         target_date=target_date,
         forecast_time=datetime.utcnow(),
         bins=bin_results,
-        ensemble_mean=mean_temp,
-        ensemble_std=adjusted_std,  # Report adjusted, not raw
+        ensemble_mean=corrected_mean,  # Bias-corrected
+        ensemble_std=adjusted_std,     # Calibrated or heuristic
         total_members=total,
         model=model,
     )
