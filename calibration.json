@@ -1,0 +1,127 @@
+{
+  "generated": "2026-03-23",
+  "model": "gfs_seamless",
+  "days": 90,
+  "cities": {
+    "nyc": {
+      "city_id": "nyc",
+      "n_days": 91,
+      "bias": 2.25,
+      "mae": 2.73,
+      "rmse": 3.59,
+      "real_std": 2.81,
+      "mean_actual": 38.0,
+      "mean_forecast": 40.3
+    },
+    "london": {
+      "city_id": "london",
+      "n_days": 91,
+      "bias": 0.08,
+      "mae": 0.48,
+      "rmse": 0.66,
+      "real_std": 0.66,
+      "mean_actual": 9.6,
+      "mean_forecast": 9.7
+    },
+    "paris": {
+      "city_id": "paris",
+      "n_days": 91,
+      "bias": 0.18,
+      "mae": 0.58,
+      "rmse": 0.73,
+      "real_std": 0.71,
+      "mean_actual": 10.2,
+      "mean_forecast": 10.4
+    },
+    "seoul": {
+      "city_id": "seoul",
+      "n_days": 91,
+      "bias": 0.23,
+      "mae": 0.84,
+      "rmse": 1.15,
+      "real_std": 1.13,
+      "mean_actual": 3.9,
+      "mean_forecast": 4.1
+    },
+    "tokyo": {
+      "city_id": "tokyo",
+      "n_days": 91,
+      "bias": -0.24,
+      "mae": 0.91,
+      "rmse": 1.08,
+      "real_std": 1.06,
+      "mean_actual": 11.6,
+      "mean_forecast": 11.4
+    },
+    "chicago": {
+      "city_id": "chicago",
+      "n_days": 91,
+      "bias": 2.05,
+      "mae": 2.3,
+      "rmse": 2.81,
+      "real_std": 1.94,
+      "mean_actual": 38.0,
+      "mean_forecast": 40.1
+    },
+    "dallas": {
+      "city_id": "dallas",
+      "n_days": 91,
+      "bias": 0.85,
+      "mae": 1.48,
+      "rmse": 1.95,
+      "real_std": 1.77,
+      "mean_actual": 67.1,
+      "mean_forecast": 67.9
+    },
+    "miami": {
+      "city_id": "miami",
+      "n_days": 91,
+      "bias": 0.52,
+      "mae": 1.16,
+      "rmse": 1.48,
+      "real_std": 1.4,
+      "mean_actual": 76.0,
+      "mean_forecast": 76.5
+    },
+    "tel_aviv": {
+      "city_id": "tel_aviv",
+      "n_days": 91,
+      "bias": -0.42,
+      "mae": 0.72,
+      "rmse": 0.88,
+      "real_std": 0.78,
+      "mean_actual": 19.8,
+      "mean_forecast": 19.3
+    },
+    "hong_kong": {
+      "city_id": "hong_kong",
+      "n_days": 91,
+      "bias": -0.75,
+      "mae": 1.04,
+      "rmse": 1.27,
+      "real_std": 1.03,
+      "mean_actual": 21.4,
+      "mean_forecast": 20.7
+    },
+    "shanghai": {
+      "city_id": "shanghai",
+      "n_days": 91,
+      "bias": 0.22,
+      "mae": 0.84,
+      "rmse": 0.98,
+      "real_std": 0.96,
+      "mean_actual": 11.9,
+      "mean_forecast": 12.1
+    },
+    "warsaw": {
+      "city_id": "warsaw",
+      "n_days": 91,
+      "bias": 0.21,
+      "mae": 0.85,
+      "rmse": 1.16,
+      "real_std": 1.15,
+      "mean_actual": 2.0,
+      "mean_forecast": 2.2
+    }
+  }
+}
