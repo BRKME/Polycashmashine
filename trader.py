@@ -135,36 +135,12 @@ def place_order(client, signal, amount):
 
 def kelly_bet(signal, max_bet):
     """
-    Quarter-Kelly bet sizing (conservative).
+    Fixed-percentage bet sizing (Kelly DISABLED until model is calibrated).
     
-    Scales with edge strength × model confidence.
-    Quarter-Kelly = aggressive enough to grow, safe enough to survive drawdowns.
+    Without calibrated probabilities, Kelly amplifies errors.
+    Fixed sizing: all bets = max_bet (capped by daily budget).
     """
-    model_p = signal.model_prob
-    cluster_p = signal.cluster_prob
-
-    # Kelly fraction
-    if signal.bet_side == "YES":
-        kelly = model_p - signal.market_price
-    else:
-        kelly = (1 - model_p) - (1 - signal.market_price)
-
-    kelly = max(kelly, 0)
-
-    # Confidence multiplier
-    if cluster_p >= 0.90:
-        conf = 1.0
-    elif cluster_p >= 0.70:
-        conf = 0.6
-    else:
-        conf = 0.3
-
-    # Quarter-Kelly × confidence × max_bet
-    bet = max_bet * kelly * conf
-
-    # Clamp
-    bet = max(1.0, min(bet, max_bet))
-    return bet
+    return max_bet
 
 
 TRADE_HISTORY_FILE = "trade_history.json"

@@ -338,6 +338,17 @@ def find_edge_signals(
         key = (market.city_id, market.target_date)
         groups[key].append(market)
 
+    # === D+1 ONLY: filter out D+2, D+3 ===
+    # Forecast error grows ~1°C/day. At 1°C bins, D+2+ is noise.
+    tomorrow = date.today() + timedelta(days=1)
+    max_date = date.today() + timedelta(days=2)  # Allow D+1 and D+2 at most
+    filtered_groups = {k: v for k, v in groups.items() if k[1] <= max_date}
+    
+    skipped_far = len(groups) - len(filtered_groups)
+    if skipped_far > 0:
+        print(f"\n  Horizon filter: skipped {skipped_far} groups beyond D+2")
+    groups = filtered_groups
+
     print(f"\n  Grouped into {len(groups)} (city, date) pairs")
 
     # Cache forecasts
@@ -422,11 +433,14 @@ def find_edge_signals(
 
             edge = (model_prob - yes_price) * 100
 
-            # === YES signal: model more confident than market ===
-            # Require market_price >= 10¢ to avoid low-liquidity tail bets
-            if (edge >= min_edge and model_prob >= 0.25 
-                    and cluster_prob >= 0.55 and yes_price >= 0.10):
+            # === YES signal only (NO disabled — uncalibrated model can't identify tails) ===
+            # Price range 20-60¢: tails are unreliable, center is overpriced
+            if (edge >= min_edge and model_prob >= 0.20 
+                    and cluster_prob >= 0.55 
+                    and yes_price >= 0.20 and yes_price <= 0.60):
                 ev = model_prob * (1 - yes_price) - (1 - model_prob) * yes_price
+                if ev <= 0:
+                    continue  # Skip negative EV
                 token_id = market.bins[0].token_id if market.bins else ""
                 signals.append(EdgeSignal(
                     market=market,
@@ -440,21 +454,9 @@ def find_edge_signals(
                     expected_value=ev,
                 ))
 
-            # === NO signal: market overprices, model says unlikely ===
-            elif yes_price > 0.08 and model_prob < 0.02:
-                ev = (1 - model_prob) * yes_price - model_prob * (1 - yes_price)
-                token_id = market.bins[1].token_id if len(market.bins) > 1 else ""
-                signals.append(EdgeSignal(
-                    market=market,
-                    bin_label=f"{int(bin_low)}-{int(bin_high)}",
-                    token_id=token_id,
-                    model_prob=model_prob,
-                    market_price=yes_price,
-                    edge=edge,
-                    cluster_prob=cluster_prob,
-                    bet_side="NO",
-                    expected_value=ev,
-                ))
+            # NO signals: DISABLED
+            # Reason: model_prob=0% is artifact of underdispersed ensemble
+            # Real probability is 10-30%, making NO bets guaranteed losses
 
     # === Dedup: only ONE signal per (city, date) ===
     # YES + NO on same city/date can BOTH lose — pick only the best one

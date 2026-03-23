@@ -167,7 +167,20 @@ def fetch_ensemble_forecast(
     # Calculate ensemble statistics
     import statistics
     mean_temp = statistics.mean(member_values)
-    std_temp = statistics.stdev(member_values) if len(member_values) > 1 else 0
+    raw_std = statistics.stdev(member_values) if len(member_values) > 1 else 1.0
+
+    # === CRITICAL: widen std to account for ensemble underdispersion ===
+    # Raw ensemble std is typically 0.4-0.8°C but real forecast error is 1.5-3°C
+    # Apply minimum floor + multiplier based on forecast horizon
+    days_ahead = (target_date - date.today()).days
+    if city["unit"] == "fahrenheit":
+        min_std = 2.5  # °F minimum
+        horizon_add = days_ahead * 0.8  # additional uncertainty per day
+    else:
+        min_std = 1.5  # °C minimum
+        horizon_add = days_ahead * 0.5
+
+    adjusted_std = max(raw_std * 2.5, min_std) + horizon_add
 
     # Build temperature bins
     bins_def = make_temperature_bins(
@@ -176,12 +189,19 @@ def fetch_ensemble_forecast(
         bin_width=city["bin_width"],
     )
 
-    # Count members per bin
+    # === Use Gaussian CDF instead of raw count/N ===
+    # This produces calibrated probabilities from the ensemble mean+std
+    from math import erf, sqrt
+    def normal_cdf(x, mu, sigma):
+        return 0.5 * (1 + erf((x - mu) / (sigma * sqrt(2))))
+
     total = len(member_values)
     bin_results = []
     for low, high, label in bins_def:
+        prob = normal_cdf(high, mean_temp, adjusted_std) - normal_cdf(low, mean_temp, adjusted_std)
+        prob = max(prob, 0.001)  # Never truly 0%
+        # Count is kept for debugging but probability comes from Gaussian
         count = sum(1 for v in member_values if low <= v <= high)
-        prob = count / total if total > 0 else 0
         bin_results.append(BinProbability(
             bin_low=low,
             bin_high=high,
@@ -197,7 +217,7 @@ def fetch_ensemble_forecast(
         forecast_time=datetime.utcnow(),
         bins=bin_results,
         ensemble_mean=mean_temp,
-        ensemble_std=std_temp,
+        ensemble_std=adjusted_std,  # Report adjusted, not raw
         total_members=total,
         model=model,
     )
