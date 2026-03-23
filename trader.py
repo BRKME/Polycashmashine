@@ -135,21 +135,15 @@ def place_order(client, signal, amount):
 
 def kelly_bet(signal, max_bet):
     """
-    Kelly-criterion inspired bet sizing.
+    Quarter-Kelly bet sizing (conservative).
     
-    Bet size scales with:
-    1. Edge strength (higher edge = more confident)
-    2. Model probability (mid-range 30-70% = most reliable)
-    3. Cluster probability (higher = more confident in neighborhood)
-    
-    Half-Kelly for safety (never bet full Kelly).
+    Scales with edge strength × model confidence.
+    Quarter-Kelly = aggressive enough to grow, safe enough to survive drawdowns.
     """
-    edge_frac = abs(signal.edge) / 100  # e.g. 0.50 for 50% edge
     model_p = signal.model_prob
     cluster_p = signal.cluster_prob
 
-    # Kelly fraction: edge / odds
-    # For binary markets: kelly = model_prob - market_price
+    # Kelly fraction
     if signal.bet_side == "YES":
         kelly = model_p - signal.market_price
     else:
@@ -157,16 +151,16 @@ def kelly_bet(signal, max_bet):
 
     kelly = max(kelly, 0)
 
-    # Confidence multiplier based on cluster probability
+    # Confidence multiplier
     if cluster_p >= 0.90:
-        conf = 1.0       # High confidence: full half-Kelly
+        conf = 1.0
     elif cluster_p >= 0.70:
-        conf = 0.7        # Medium: 70% of half-Kelly
+        conf = 0.6
     else:
-        conf = 0.4        # Low: 40% of half-Kelly
+        conf = 0.3
 
-    # Half-Kelly * confidence * max_bet
-    bet = max_bet * kelly * 2.0 * conf  # kelly*2 because kelly is usually small
+    # Quarter-Kelly × confidence × max_bet
+    bet = max_bet * kelly * conf
 
     # Clamp
     bet = max(1.0, min(bet, max_bet))

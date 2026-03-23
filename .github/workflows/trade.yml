@@ -16,11 +16,11 @@ on:
       max_bet:
         description: 'Max bet per trade ($)'
         required: false
-        default: '10'
+        default: '5'
       daily_budget:
         description: 'Daily budget ($)'
         required: false
-        default: '70'
+        default: '30'
 
 concurrency:
   group: weather-trader
@@ -53,12 +53,12 @@ jobs:
       - name: Run trader
         env:
           # Scheduled runs = live trading; manual = uses input (default false)
-          DRY_RUN: ${{ inputs.dry_run || 'false' }}
-          MAX_BET: ${{ inputs.max_bet || '10' }}
-          DAILY_BUDGET: ${{ inputs.daily_budget || '70' }}
-          MAX_TRADES: '8'
-          MIN_EDGE: '15'
-          MIN_EV: '0.10'
+          DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          MAX_BET: ${{ inputs.max_bet || '5' }}
+          DAILY_BUDGET: ${{ inputs.daily_budget || '30' }}
+          MAX_TRADES: '5'
+          MIN_EDGE: '20'
+          MIN_EV: '0.15'
           POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
           POLY_FUNDER: ${{ secrets.POLY_FUNDER }}
           POLY_SIG_TYPE: ${{ secrets.POLY_SIG_TYPE }}

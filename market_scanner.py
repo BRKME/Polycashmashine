@@ -456,31 +456,22 @@ def find_edge_signals(
                     expected_value=ev,
                 ))
 
-    # === Dedup: only best YES and best NO per (city, date) ===
-    # Multiple YES on same city/date conflict — only one can win
-    # Multiple NO on same city/date is wasteful — keep highest EV
-    best_yes = {}
-    best_no = {}
+    # === Dedup: only ONE signal per (city, date) ===
+    # YES + NO on same city/date can BOTH lose — pick only the best one
+    best_per_city = {}
     for s in signals:
         key = (s.market.city_id, s.market.target_date)
-        if s.bet_side == "YES":
-            if key not in best_yes or s.expected_value > best_yes[key].expected_value:
-                best_yes[key] = s
-        else:
-            if key not in best_no or s.expected_value > best_no[key].expected_value:
-                best_no[key] = s
+        if key not in best_per_city or s.expected_value > best_per_city[key].expected_value:
+            best_per_city[key] = s
 
-    deduped = list(best_yes.values()) + list(best_no.values())
-    removed = len(signals) - len(deduped)
+    removed = len(signals) - len(best_per_city)
     if removed > 0:
-        print(f"\n  Dedup: best per (city,date,side), removed {removed} duplicates")
+        print(f"\n  Dedup: 1 best signal per (city,date), removed {removed}")
 
-    signals = deduped
+    signals = list(best_per_city.values())
 
-    signals = deduped
-
-    # Sort by absolute edge
-    signals.sort(key=lambda s: abs(s.edge), reverse=True)
+    # Sort by EV (best first)
+    signals.sort(key=lambda s: s.expected_value, reverse=True)
     return signals
 
 
