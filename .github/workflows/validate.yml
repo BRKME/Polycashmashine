@@ -1,0 +1,28 @@
+name: Model Validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+
+      - name: Run validation
+        run: python validate.py 2>&1 | tee validation_output.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation
+          path: |
+            validation_output.txt
+            validation_results.json
+          retention-days: 90
