@@ -309,29 +309,71 @@ def run():
         print("No valid data for comparison.", flush=True)
         return
 
-    # Get model probabilities (batch by unique city+date)
-    forecast_cache = {}
+    # Get model probabilities — ONE API call per (city, date), not per bin
+    forecast_cache = {}  # key -> (corrected_mean, sigma)
     results_by_city = defaultdict(list)
 
-    for i, v in enumerate(valid):
-        cache_key = f"{v['city_id']}_{v['date']}"
-        
-        model_prob = get_forecast_prob(
-            v["city_id"], v["date"], v["bin_low"], v["bin_high"], cal_data
-        )
-        
-        if model_prob is None:
+    # Group by (city, date) first
+    from collections import defaultdict as dd
+    groups = dd(list)
+    for v in valid:
+        groups[(v["city_id"], v["date"].isoformat())].append(v)
+
+    print(f"\n  Unique (city, date) pairs: {len(groups)}", flush=True)
+
+    for (city_id, date_str), entries in groups.items():
+        target_date = entries[0]["date"]
+        city = CITIES[city_id]
+
+        # Fetch forecast ONCE per (city, date)
+        params = {
+            "latitude": city["lat"],
+            "longitude": city["lon"],
+            "daily": "temperature_2m_max",
+            "timezone": city["timezone"],
+            "start_date": (target_date - timedelta(days=1)).isoformat(),
+            "end_date": target_date.isoformat(),
+            "models": FORECAST_MODEL,
+        }
+        if city["unit"] == "fahrenheit":
+            params["temperature_unit"] = "fahrenheit"
+
+        data = _get_with_retry(OPEN_METEO_HISTORICAL_FORECAST_URL, params, timeout=60)
+        if not data:
             continue
 
-        entry = {
-            **v,
-            "model_prob": model_prob,
-        }
-        results_by_city[v["city_id"]].append(entry)
+        times = data.get("daily", {}).get("time", [])
+        temps = data.get("daily", {}).get("temperature_2m_max", [])
 
-        if (i + 1) % 20 == 0:
-            print(f"  Processed {i+1}/{len(valid)}...", flush=True)
-            time.sleep(0.3)
+        if date_str not in times:
+            continue
+        idx = times.index(date_str)
+        if idx >= len(temps) or temps[idx] is None:
+            continue
+
+        forecast_temp = temps[idx]
+
+        # Calibration
+        bias = 0.0
+        cal_std = None
+        if cal_data:
+            cc = cal_data.get("cities", {}).get(city_id)
+            if cc:
+                bias = cc.get("bias", 0.0)
+                cal_std = cc.get("real_std", None)
+
+        corrected = forecast_temp - bias
+        sigma = cal_std if (cal_std and cal_std > 0) else (2.0 if city["unit"] == "fahrenheit" else 1.2)
+
+        # Compute model_prob for ALL bins in this group
+        for v in entries:
+            prob = normal_cdf(v["bin_high"], corrected, sigma) - normal_cdf(v["bin_low"], corrected, sigma)
+            prob = max(prob, 0.001)
+            results_by_city[city_id].append({**v, "model_prob": prob})
+
+        time.sleep(0.3)
+
+    print(f"  Total entries with model probs: {sum(len(v) for v in results_by_city.values())}", flush=True)
 
     # Analysis per city
     print(f"\n{'=' * 70}", flush=True)
