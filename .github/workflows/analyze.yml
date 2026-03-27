@@ -1,0 +1,36 @@
+name: Edge Analysis
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+
+      - name: Download collected data
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: daily-state
+          path: .
+          if_no_artifact_found: warn
+          search_artifacts: true
+          workflow: trade.yml
+        continue-on-error: true
+
+      - name: Run analysis
+        run: python analyze_edge.py 2>&1 | tee analysis_output.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analysis
+          path: analysis_output.txt
+          retention-days: 90

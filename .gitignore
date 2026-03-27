@@ -5,6 +5,7 @@ backtest_results.json
 live_signals.json
 daily_trades.json
 trade_history.json
+price_history.json
 trade_log.json
 *.db
 .pytest_cache/

@@ -75,6 +75,11 @@ jobs:
           PROXY_URL: ${{ secrets.PROXY_URL }}
         run: python trader.py 2>&1 | tee trade_output.txt
 
+      - name: Collect prices (for validation)
+        if: always()
+        run: python collect_prices.py 2>&1 | tee -a trade_output.txt
+        continue-on-error: true
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -85,5 +90,6 @@ jobs:
             daily_trades.json
             live_signals.json
             trade_history.json
+            price_history.json
           retention-days: 30
           overwrite: true
