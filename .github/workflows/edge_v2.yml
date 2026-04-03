@@ -1,0 +1,36 @@
+name: Edge V2 — Multi-Model Scan
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+
+      - name: Download calibration
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: calibration
+          path: .
+          if_no_artifact_found: warn
+          search_artifacts: true
+          workflow: calibrate.yml
+        continue-on-error: true
+
+      - name: Run multi-model scan
+        run: python edge_v2.py 2>&1 | tee edge_v2_output.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: edge-v2
+          path: edge_v2_output.txt
+          retention-days: 30
