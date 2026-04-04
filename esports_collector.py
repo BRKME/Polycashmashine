@@ -153,11 +153,24 @@ def discover_esports():
         print(f"    Sports API status: {resp.status_code}", flush=True)
         if resp.status_code == 200:
             sports = resp.json()
-            esports = [s for s in sports if "esport" in s.get("group", "").lower() 
-                       or "esport" in s.get("key", "").lower()]
-            print(f"    All sports: {len(sports)}, esports: {len(esports)}", flush=True)
+            # Show all unique groups to discover esports naming
+            groups = set(s.get("group", "") for s in sports)
+            print(f"    All groups: {sorted(groups)}", flush=True)
+            
+            # Search broadly for esports/gaming
+            esports = [s for s in sports if any(kw in (s.get("group", "") + s.get("key", "") + s.get("title", "")).lower() 
+                       for kw in ["esport", "gaming", "counter", "league_of", "dota", "valorant", "lol", "cs2", "csgo"])]
+            print(f"    All sports: {len(sports)}, esports candidates: {len(esports)}", flush=True)
             for e in esports:
-                print(f"      {e['key']}: {e.get('title', '')} ({e.get('group', '')})", flush=True)
+                print(f"      {e['key']}: {e.get('title', '')} ({e.get('group', '')}) active={e.get('active')}", flush=True)
+            
+            # If still nothing, show all active sports
+            if not esports:
+                print(f"    No esports found. Active sports sample:", flush=True)
+                active = [s for s in sports if s.get("active")]
+                for s in active[:20]:
+                    print(f"      {s['key']}: {s.get('title','')} ({s.get('group','')})", flush=True)
+            
             return esports
         else:
             print(f"    Error: {resp.text[:200]}", flush=True)
