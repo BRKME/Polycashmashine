@@ -151,14 +151,35 @@ def fetch_pinnacle_odds(sport_id):
         return []
 
     try:
+        # Simple call first — don't filter by bookmaker (free tier may not support it)
         resp = requests.get(f"{ODDSPAPI_BASE}/fixtures", params={
             "apiKey": ODDSPAPI_KEY,
             "sportId": sport_id,
-            "bookmakers": "pinnacle",
-            "markets": "171",  # Match Winner
         }, timeout=30)
+        print(f"    API status: {resp.status_code}", flush=True)
+        
         if resp.status_code == 200:
-            return resp.json()
+            data = resp.json()
+            if isinstance(data, list):
+                print(f"    Fixtures: {len(data)}", flush=True)
+                if data:
+                    # Debug: show first fixture structure
+                    first = data[0]
+                    print(f"    Sample keys: {list(first.keys())[:8]}", flush=True)
+                    parts = first.get("participants", first.get("teams", []))
+                    print(f"    Participants: {[p.get('name', p) for p in parts[:2]] if parts else 'none'}", flush=True)
+                return data
+            elif isinstance(data, dict):
+                print(f"    Response keys: {list(data.keys())[:8]}", flush=True)
+                # Maybe fixtures are nested
+                fixtures = data.get("fixtures", data.get("data", data.get("results", [])))
+                if fixtures:
+                    print(f"    Nested fixtures: {len(fixtures)}", flush=True)
+                    return fixtures
+                else:
+                    print(f"    Response snippet: {str(data)[:200]}", flush=True)
+        else:
+            print(f"    Error response: {resp.text[:200]}", flush=True)
     except Exception as e:
         print(f"  OddsPapi error: {e}", flush=True)
     return []
