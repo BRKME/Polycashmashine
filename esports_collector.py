@@ -380,7 +380,41 @@ def collect():
                 print(f"    Error: {e}", flush=True)
             time.sleep(1)
 
-    # 3. Match
+    # 3. DEBUG: Show team names from both sides before matching
+    print(f"\n  === TEAM NAME COMPARISON ===", flush=True)
+    
+    # OddsPapi teams
+    odds_names = set()
+    for f in all_fixtures:
+        n1 = normalize_team(f.get("participant1Name", ""))
+        n2 = normalize_team(f.get("participant2Name", ""))
+        if n1: odds_names.add(n1)
+        if n2: odds_names.add(n2)
+    print(f"  OddsPapi unique teams: {len(odds_names)}", flush=True)
+    for n in sorted(odds_names)[:10]:
+        print(f"    OA: '{n}'", flush=True)
+
+    # Polymarket teams
+    poly_names = set()
+    for m in poly_markets[:200]:
+        title = m.get("_event_title", "") or m.get("question", "")
+        vs = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
+        if vs:
+            n1 = normalize_team(vs.group(1))
+            n2 = normalize_team(vs.group(2))
+            if n1: poly_names.add(n1)
+            if n2: poly_names.add(n2)
+    print(f"  Polymarket unique teams: {len(poly_names)}", flush=True)
+    for n in sorted(poly_names)[:10]:
+        print(f"    PM: '{n}'", flush=True)
+
+    # Intersection
+    overlap = odds_names & poly_names
+    print(f"  OVERLAP: {len(overlap)} teams", flush=True)
+    for n in sorted(overlap)[:10]:
+        print(f"    BOTH: '{n}'", flush=True)
+
+    # 4. Match
     matched = match_markets(poly_markets, all_fixtures)
     print(f"  Matched: {len(matched)} pairs", flush=True)
 
