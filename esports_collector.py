@@ -27,7 +27,7 @@ Fields per observation (per expert requirements):
 - outcome (filled post-resolution: 1=team_a won, 0=team_b won)
 
 Run: python esports_collector.py
-Env: ODDSPAPI_KEY (free tier API key from oddspapi.io)
+Env: ODDSPAPI_KEY (API key from the-odds-api.com)
 """
 
 import os
@@ -42,17 +42,12 @@ from collections import defaultdict
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API = "https://clob.polymarket.com"
 
-# OddsPapi
-ODDSPAPI_KEY = os.getenv("ODDSPAPI_KEY", "")
-ODDSPAPI_BASE = "https://api.oddspapi.io/v4"
+# The Odds API (the-odds-api.com)
+ODDS_API_KEY = os.getenv("ODDSPAPI_KEY", "")  # Same secret name for simplicity
+ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
-# Esport IDs in OddsPapi
-SPORT_IDS = {
-    "cs2": 17,
-    "lol": 18,
-    "dota2": 16,
-    "valorant": 61,
-}
+# Esport sport keys (will be discovered dynamically)
+ESPORT_SPORTS = []  # Populated at runtime
 
 HISTORY_FILE = "esports_price_history.json"
 
@@ -144,44 +139,61 @@ def fetch_polymarket_orderbook(token_id):
     return None
 
 
-def fetch_pinnacle_odds(sport_id):
-    """Fetch current Pinnacle odds for a sport from OddsPapi."""
-    if not ODDSPAPI_KEY:
+def discover_esports():
+    """Discover available esports sport keys from The Odds API."""
+    if not ODDS_API_KEY:
         print("  WARNING: No ODDSPAPI_KEY set", flush=True)
         return []
 
     try:
-        # Simple call first — don't filter by bookmaker (free tier may not support it)
-        resp = requests.get(f"{ODDSPAPI_BASE}/fixtures", params={
-            "apiKey": ODDSPAPI_KEY,
-            "sportId": sport_id,
+        resp = requests.get(f"{ODDS_API_BASE}/sports", params={
+            "apiKey": ODDS_API_KEY,
+            "all": "true",
+        }, timeout=15)
+        print(f"    Sports API status: {resp.status_code}", flush=True)
+        if resp.status_code == 200:
+            sports = resp.json()
+            esports = [s for s in sports if "esport" in s.get("group", "").lower() 
+                       or "esport" in s.get("key", "").lower()]
+            print(f"    All sports: {len(sports)}, esports: {len(esports)}", flush=True)
+            for e in esports:
+                print(f"      {e['key']}: {e.get('title', '')} ({e.get('group', '')})", flush=True)
+            return esports
+        else:
+            print(f"    Error: {resp.text[:200]}", flush=True)
+    except Exception as e:
+        print(f"    Discover error: {e}", flush=True)
+    return []
+
+
+def fetch_pinnacle_odds(sport_key):
+    """Fetch Pinnacle odds for a sport from The Odds API."""
+    if not ODDS_API_KEY:
+        return []
+
+    try:
+        resp = requests.get(f"{ODDS_API_BASE}/sports/{sport_key}/odds", params={
+            "apiKey": ODDS_API_KEY,
+            "regions": "eu",
+            "markets": "h2h",
+            "bookmakers": "pinnacle",
+            "oddsFormat": "decimal",
         }, timeout=30)
-        print(f"    API status: {resp.status_code}", flush=True)
-        
+        print(f"    {sport_key} odds status: {resp.status_code}", flush=True)
+
         if resp.status_code == 200:
             data = resp.json()
-            if isinstance(data, list):
-                print(f"    Fixtures: {len(data)}", flush=True)
-                if data:
-                    # Debug: show first fixture structure
-                    first = data[0]
-                    print(f"    Sample keys: {list(first.keys())[:8]}", flush=True)
-                    parts = first.get("participants", first.get("teams", []))
-                    print(f"    Participants: {[p.get('name', p) for p in parts[:2]] if parts else 'none'}", flush=True)
-                return data
-            elif isinstance(data, dict):
-                print(f"    Response keys: {list(data.keys())[:8]}", flush=True)
-                # Maybe fixtures are nested
-                fixtures = data.get("fixtures", data.get("data", data.get("results", [])))
-                if fixtures:
-                    print(f"    Nested fixtures: {len(fixtures)}", flush=True)
-                    return fixtures
-                else:
-                    print(f"    Response snippet: {str(data)[:200]}", flush=True)
+            print(f"    {sport_key}: {len(data)} events with odds", flush=True)
+            if data:
+                first = data[0]
+                print(f"    Sample: {first.get('home_team', '?')} vs {first.get('away_team', '?')}", flush=True)
+            return data
+        elif resp.status_code == 422:
+            print(f"    Sport '{sport_key}' not available or out of season", flush=True)
         else:
-            print(f"    Error response: {resp.text[:200]}", flush=True)
+            print(f"    Error: {resp.text[:150]}", flush=True)
     except Exception as e:
-        print(f"  OddsPapi error: {e}", flush=True)
+        print(f"    Odds error: {e}", flush=True)
     return []
 
 
@@ -196,23 +208,21 @@ def normalize_team(name):
     return name.strip()
 
 
-def match_markets(poly_markets, pinnacle_fixtures):
-    """Match Polymarket markets to Pinnacle fixtures by team names."""
+def match_markets(poly_markets, odds_events):
+    """Match Polymarket markets to The Odds API events by team names."""
     matched = []
 
-    # Index Pinnacle by normalized team names
-    pin_index = {}
-    for fix in pinnacle_fixtures:
-        participants = fix.get("participants", [])
-        if len(participants) >= 2:
-            t1 = normalize_team(participants[0].get("name", ""))
-            t2 = normalize_team(participants[1].get("name", ""))
+    # Index odds events by normalized team names
+    odds_index = {}
+    for event in odds_events:
+        t1 = normalize_team(event.get("home_team", ""))
+        t2 = normalize_team(event.get("away_team", ""))
+        if t1 and t2:
             key = tuple(sorted([t1, t2]))
-            pin_index[key] = fix
+            odds_index[key] = event
 
     for m in poly_markets:
         title = m.get("_event_title", "") or m.get("question", "")
-        # Extract team names from title like "CS2: Team A vs Team B (BO3)"
         vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
         if not vs_match:
             continue
@@ -223,10 +233,10 @@ def match_markets(poly_markets, pinnacle_fixtures):
         t2_norm = normalize_team(t2_raw)
         key = tuple(sorted([t1_norm, t2_norm]))
 
-        if key in pin_index:
+        if key in odds_index:
             matched.append({
                 "polymarket": m,
-                "pinnacle": pin_index[key],
+                "odds_event": odds_index[key],
                 "team_a": t1_raw,
                 "team_b": t2_raw,
             })
@@ -252,40 +262,61 @@ def collect():
         save_history(history)
         return
 
-    # 2. Fetch Pinnacle odds for each esport
-    all_pinnacle = []
-    for game, sport_id in SPORT_IDS.items():
-        print(f"  Fetching Pinnacle {game}...", flush=True)
-        fixtures = fetch_pinnacle_odds(sport_id)
-        for f in fixtures:
-            f["_game"] = game
-        all_pinnacle.extend(fixtures)
+    # 2. Discover and fetch esports odds from The Odds API
+    print(f"\n  Discovering esports on The Odds API...", flush=True)
+    esports = discover_esports()
+
+    all_odds_events = []
+    for sport in esports:
+        sport_key = sport["key"]
+        if not sport.get("active", False):
+            continue
+        events = fetch_pinnacle_odds(sport_key)
+        for e in events:
+            e["_sport_key"] = sport_key
+            e["_game"] = sport.get("title", sport_key)
+        all_odds_events.extend(events)
         time.sleep(0.5)
 
-    print(f"  Pinnacle: {len(all_pinnacle)} fixtures", flush=True)
+    print(f"  Total odds events: {len(all_odds_events)}", flush=True)
 
     # 3. Match
-    matched = match_markets(poly_markets, all_pinnacle)
+    matched = match_markets(poly_markets, all_odds_events)
     print(f"  Matched: {len(matched)} pairs", flush=True)
 
     # 4. Record snapshots
     new_snapshots = 0
     for pair in matched:
         poly = pair["polymarket"]
-        pin = pair["pinnacle"]
+        event = pair["odds_event"]
 
-        # Pinnacle odds
-        participants = pin.get("participants", [])
-        markets_data = pin.get("markets", [])
-
-        # Find match winner market
+        # Extract Pinnacle odds from The Odds API format
         odds_a, odds_b = None, None
-        for mkt in markets_data:
-            if mkt.get("marketId") == 171:  # Match Winner
-                outcomes = mkt.get("outcomes", [])
-                if len(outcomes) >= 2:
-                    odds_a = float(outcomes[0].get("price", 0))
-                    odds_b = float(outcomes[1].get("price", 0))
+        home_team = event.get("home_team", "")
+        away_team = event.get("away_team", "")
+        
+        for bk in event.get("bookmakers", []):
+            if bk.get("key") == "pinnacle":
+                for mkt in bk.get("markets", []):
+                    if mkt.get("key") == "h2h":
+                        outcomes = mkt.get("outcomes", [])
+                        for o in outcomes:
+                            if o.get("name") == home_team:
+                                odds_a = float(o.get("price", 0))
+                            elif o.get("name") == away_team:
+                                odds_b = float(o.get("price", 0))
+        
+        # Fallback: use first bookmaker if no Pinnacle
+        if not odds_a or not odds_b:
+            for bk in event.get("bookmakers", []):
+                for mkt in bk.get("markets", []):
+                    if mkt.get("key") == "h2h":
+                        outcomes = mkt.get("outcomes", [])
+                        if len(outcomes) >= 2:
+                            odds_a = float(outcomes[0].get("price", 0))
+                            odds_b = float(outcomes[1].get("price", 0))
+                if odds_a and odds_b:
+                    break
 
         if not odds_a or not odds_b or odds_a <= 1 or odds_b <= 1:
             continue
@@ -315,7 +346,7 @@ def collect():
             time.sleep(0.2)
 
         # Match start time
-        start_time = pin.get("startTime", "")
+        start_time = event.get("commence_time", "")
         hours_to_start = None
         if start_time:
             try:
@@ -327,13 +358,13 @@ def collect():
         snapshot = {
             "t_snapshot": now.isoformat(),
             "match_id": poly.get("conditionId", "")[:20],
-            "game": pin.get("_game", ""),
+            "game": event.get("_game", ""),
             "team_a": pair["team_a"],
             "team_b": pair["team_b"],
-            "tournament": pin.get("tournament", {}).get("name", "")[:40],
+            "tournament": event.get("sport_title", "")[:40],
             "match_start": start_time,
             "hours_to_start": hours_to_start,
-            # Pinnacle
+            # Sharp book odds
             "pin_odds_a": odds_a,
             "pin_odds_b": odds_b,
             "pin_vig_pct": round((1/odds_a + 1/odds_b - 1) * 100, 1),
@@ -349,17 +380,15 @@ def collect():
             # Derived
             "diff_pct": round((fair_a - yes_price) * 100, 1),
             "event_title": poly.get("_event_title", "")[:60],
-            # Outcome: filled later
             "outcome": None,
         }
 
         history["snapshots"].append(snapshot)
         new_snapshots += 1
 
-        # Print notable differences
         if abs(snapshot["diff_pct"]) >= 5:
-            print(f"\n  >>> {snapshot['game'].upper()}: {pair['team_a']} vs {pair['team_b']}", flush=True)
-            print(f"      Pinnacle fair: {fair_a:.0%} | Polymarket: {yes_price:.0%} | Diff: {snapshot['diff_pct']:+.1f}%", flush=True)
+            print(f"\n  >>> {snapshot['game']}: {pair['team_a']} vs {pair['team_b']}", flush=True)
+            print(f"      Sharp fair: {fair_a:.0%} | Polymarket: {yes_price:.0%} | Diff: {snapshot['diff_pct']:+.1f}%", flush=True)
             if book:
                 print(f"      Spread: {book['spread']:.2f} | Bid depth: ${book['bid_depth']:.0f} | Ask depth: ${book['ask_depth']:.0f}", flush=True)
 
