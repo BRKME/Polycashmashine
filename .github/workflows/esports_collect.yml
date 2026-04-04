@@ -34,7 +34,8 @@ jobs:
       - name: Collect prices
         env:
           ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
-        run: python check_overlap.py 2>&1 | tee esports_output.txt
+          ODDSPAPI_KEY_V2: ${{ secrets.ODDSPAPI_KEY_V2 }}
+        run: python esports_collector.py 2>&1 | tee esports_output.txt
 
       - name: Upload data
         if: always()
