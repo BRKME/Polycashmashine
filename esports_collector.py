@@ -228,45 +228,47 @@ def extract_pinnacle_odds(fixture):
 def normalize_team(name):
     """Normalize team name for fuzzy matching."""
     name = name.lower().strip()
-    # Remove common suffixes
     for suffix in [" esports", " gaming", " team", " club", " e-sports", " academy"]:
         name = name.replace(suffix, "")
-    # Remove special chars
     name = re.sub(r'[^a-z0-9\s]', '', name)
     return name.strip()
+
+
+def extract_teams(title):
+    """Extract team names from event title, stripping game prefix."""
+    # Strip "Counter-Strike: ", "LoL: ", "Dota 2: " etc
+    stripped = re.sub(r'^[^:]+:\s*', '', title)
+    vs = re.search(r'(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', stripped, re.IGNORECASE)
+    if vs:
+        return vs.group(1).strip(), vs.group(2).strip()
+    return None, None
 
 
 def match_markets(poly_markets, fixtures):
     """Match Polymarket markets to OddsPapi fixtures by team names."""
     matched = []
 
-    # Index fixtures by normalized team names
     fix_index = {}
     for fix in fixtures:
-        # OddsPapi flat fields
         t1 = normalize_team(fix.get("participant1Name", ""))
         t2 = normalize_team(fix.get("participant2Name", ""))
-        
         if t1 and t2:
             key = tuple(sorted([t1, t2]))
             fix_index[key] = fix
 
     print(f"    Indexed {len(fix_index)} unique fixture pairs", flush=True)
-    # Show sample fixture names
     for i, (key, fix) in enumerate(fix_index.items()):
         if i < 5:
-            print(f"    OddsPapi: {fix.get('participant1Name')} vs {fix.get('participant2Name')} (hasOdds={fix.get('hasOdds')})", flush=True)
+            print(f"    OA: {fix.get('participant1Name')} vs {fix.get('participant2Name')} (hasOdds={fix.get('hasOdds')})", flush=True)
 
     poly_parsed = 0
     for m in poly_markets:
         title = m.get("_event_title", "") or m.get("question", "")
-        vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
-        if not vs_match:
+        t1_raw, t2_raw = extract_teams(title)
+        if not t1_raw:
             continue
         poly_parsed += 1
 
-        t1_raw = vs_match.group(1).strip()
-        t2_raw = vs_match.group(2).strip()
         t1_norm = normalize_team(t1_raw)
         t2_norm = normalize_team(t2_raw)
         key = tuple(sorted([t1_norm, t2_norm]))
@@ -280,37 +282,14 @@ def match_markets(poly_markets, fixtures):
             })
 
     print(f"    Polymarket parsed: {poly_parsed} vs-matches", flush=True)
-    # Show sample Polymarket names
+    # Show samples
     for m in poly_markets[:10]:
         title = m.get("_event_title", "") or m.get("question", "")
-        vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
-        if vs_match:
-            t1n = normalize_team(vs_match.group(1))
-            t2n = normalize_team(vs_match.group(2))
-            key = tuple(sorted([t1n, t2n]))
-            in_odds = "✓ MATCH" if key in fix_index else ""
-            print(f"      Poly: '{t1n}' vs '{t2n}' {in_odds}", flush=True)
-
-    # Show near-misses: Polymarket teams that partially match OddsPapi
-    odds_teams = set()
-    for fix in fixtures:
-        odds_teams.add(normalize_team(fix.get("participant1Name", "")))
-        odds_teams.add(normalize_team(fix.get("participant2Name", "")))
-    
-    near_misses = 0
-    for m in poly_markets[:50]:
-        title = m.get("_event_title", "") or m.get("question", "")
-        vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
-        if not vs_match:
-            continue
-        t1n = normalize_team(vs_match.group(1))
-        for ot in odds_teams:
-            if ot and t1n and (t1n in ot or ot in t1n) and t1n != ot:
-                print(f"      NEAR MISS: Poly='{t1n}' ~ OddsPapi='{ot}'", flush=True)
-                near_misses += 1
-                break
-        if near_misses >= 5:
-            break
+        t1, t2 = extract_teams(title)
+        if t1:
+            n1, n2 = normalize_team(t1), normalize_team(t2)
+            hit = "✓" if tuple(sorted([n1, n2])) in fix_index else ""
+            print(f"      PM: '{n1}' vs '{n2}' {hit}", flush=True)
 
     return matched
 
@@ -398,10 +377,10 @@ def collect():
     poly_names = set()
     for m in poly_markets[:200]:
         title = m.get("_event_title", "") or m.get("question", "")
-        vs = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
-        if vs:
-            n1 = normalize_team(vs.group(1))
-            n2 = normalize_team(vs.group(2))
+        t1, t2 = extract_teams(title)
+        if t1:
+            n1 = normalize_team(t1)
+            n2 = normalize_team(t2)
             if n1: poly_names.add(n1)
             if n2: poly_names.add(n2)
     print(f"  Polymarket unique teams: {len(poly_names)}", flush=True)
