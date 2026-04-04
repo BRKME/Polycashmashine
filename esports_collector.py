@@ -243,25 +243,27 @@ def match_markets(poly_markets, fixtures):
     # Index fixtures by normalized team names
     fix_index = {}
     for fix in fixtures:
-        # OddsPapi uses "participants" array
-        parts = fix.get("participants", [])
-        if len(parts) >= 2:
-            t1 = normalize_team(parts[0].get("name", ""))
-            t2 = normalize_team(parts[1].get("name", ""))
-        else:
-            # The Odds API fallback
-            t1 = normalize_team(fix.get("home_team", ""))
-            t2 = normalize_team(fix.get("away_team", ""))
+        # OddsPapi flat fields
+        t1 = normalize_team(fix.get("participant1Name", ""))
+        t2 = normalize_team(fix.get("participant2Name", ""))
         
         if t1 and t2:
             key = tuple(sorted([t1, t2]))
             fix_index[key] = fix
 
+    print(f"    Indexed {len(fix_index)} unique fixture pairs", flush=True)
+    # Show sample fixture names
+    for i, (key, fix) in enumerate(fix_index.items()):
+        if i < 5:
+            print(f"    OddsPapi: {fix.get('participant1Name')} vs {fix.get('participant2Name')} (hasOdds={fix.get('hasOdds')})", flush=True)
+
+    poly_parsed = 0
     for m in poly_markets:
         title = m.get("_event_title", "") or m.get("question", "")
         vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
         if not vs_match:
             continue
+        poly_parsed += 1
 
         t1_raw = vs_match.group(1).strip()
         t2_raw = vs_match.group(2).strip()
@@ -276,6 +278,19 @@ def match_markets(poly_markets, fixtures):
                 "team_a": t1_raw,
                 "team_b": t2_raw,
             })
+
+    print(f"    Polymarket parsed: {poly_parsed} vs-matches", flush=True)
+    # Show sample Polymarket names
+    sample_poly = []
+    for m in poly_markets[:20]:
+        title = m.get("_event_title", "") or m.get("question", "")
+        vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
+        if vs_match:
+            sample_poly.append(f"{normalize_team(vs_match.group(1))} vs {normalize_team(vs_match.group(2))}")
+    if sample_poly:
+        print(f"    Polymarket samples:", flush=True)
+        for s in sample_poly[:5]:
+            print(f"      {s}", flush=True)
 
     return matched
 
@@ -302,67 +317,41 @@ def collect():
     print(f"\n  Fetching esports odds from OddsPapi...", flush=True)
     all_fixtures = fetch_esports_odds()
     print(f"  Total fixtures: {len(all_fixtures)}", flush=True)
+    
+    # Count fixtures with odds
+    with_odds = sum(1 for f in all_fixtures if f.get("hasOdds"))
+    print(f"  Fixtures with odds: {with_odds}/{len(all_fixtures)}", flush=True)
 
-    # Debug: try to get participant names and odds for first fixture
+    # Debug: try /odds endpoint
     if all_fixtures and ODDSPAPI_KEY:
-        first = all_fixtures[0]
-        fid = first.get("fixtureId", "")
-        p1id = first.get("participant1Id", "")
-        p2id = first.get("participant2Id", "")
+        fid = all_fixtures[0].get("fixtureId", "")
+        print(f"\n  Debug: trying odds endpoints...", flush=True)
         
-        # Try /odds endpoint
-        print(f"\n  Debug: fetching odds for fixture {fid}...", flush=True)
-        try:
-            resp = requests.get(f"{ODDSPAPI_BASE}/fixtures/{fid}/odds", params={
-                "apiKey": ODDSPAPI_KEY,
-            }, timeout=15)
-            print(f"    /fixtures/{fid}/odds status: {resp.status_code}", flush=True)
-            if resp.status_code == 200:
-                odds_data = resp.json()
-                print(f"    Odds response: {json.dumps(odds_data, indent=2)[:400]}", flush=True)
-            else:
-                print(f"    Error: {resp.text[:150]}", flush=True)
-        except Exception as e:
-            print(f"    Error: {e}", flush=True)
-        
-        time.sleep(1)
-        
-        # Try /participants endpoint
-        print(f"\n  Debug: fetching participant {p1id}...", flush=True)
-        try:
-            resp = requests.get(f"{ODDSPAPI_BASE}/participants/{p1id}", params={
-                "apiKey": ODDSPAPI_KEY,
-            }, timeout=15)
-            print(f"    /participants/{p1id} status: {resp.status_code}", flush=True)
-            if resp.status_code == 200:
-                print(f"    Response: {json.dumps(resp.json(), indent=2)[:300]}", flush=True)
-            else:
-                print(f"    Error: {resp.text[:150]}", flush=True)
-        except Exception as e:
-            print(f"    Error: {e}", flush=True)
-        
-        time.sleep(1)
-
-        # Try fixtures with extra params
-        print(f"\n  Debug: fixtures with participants...", flush=True)
-        try:
-            resp = requests.get(f"{ODDSPAPI_BASE}/fixtures", params={
-                "apiKey": ODDSPAPI_KEY,
-                "sportId": 17,
-                "from": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "to": (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "include": "participants,odds",
-            }, timeout=15)
-            print(f"    Status: {resp.status_code}", flush=True)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data:
-                    print(f"    Keys with include: {list(data[0].keys())}", flush=True)
-                    print(f"    Full: {json.dumps(data[0], indent=2)[:500]}", flush=True)
-            else:
-                print(f"    Error: {resp.text[:150]}", flush=True)
-        except Exception as e:
-            print(f"    Error: {e}", flush=True)
+        for endpoint in [
+            f"{ODDSPAPI_BASE}/odds?apiKey={ODDSPAPI_KEY}&fixtureId={fid}",
+            f"{ODDSPAPI_BASE}/odds?apiKey={ODDSPAPI_KEY}&sportId=17&from={datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}&to={(datetime.now(timezone.utc) + timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            f"{ODDSPAPI_BASE}/odds/prematch?apiKey={ODDSPAPI_KEY}&sportId=17",
+            f"{ODDSPAPI_BASE}/fixtures/odds?apiKey={ODDSPAPI_KEY}&fixtureId={fid}",
+        ]:
+            try:
+                # Clean URL for logging
+                clean_url = endpoint.split("apiKey=")[0] + "apiKey=***&" + "&".join(endpoint.split("apiKey=")[1].split("&")[1:])
+                print(f"    Trying: {clean_url[:80]}...", flush=True)
+                resp = requests.get(endpoint, timeout=10)
+                print(f"    Status: {resp.status_code}", flush=True)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list) and data:
+                        print(f"    SUCCESS! {len(data)} items, keys: {list(data[0].keys())[:8]}", flush=True)
+                        print(f"    Sample: {json.dumps(data[0], indent=2)[:300]}", flush=True)
+                        break
+                    elif isinstance(data, dict):
+                        print(f"    Dict keys: {list(data.keys())[:8]}", flush=True)
+                elif resp.status_code != 404:
+                    print(f"    {resp.text[:100]}", flush=True)
+            except Exception as e:
+                print(f"    Error: {e}", flush=True)
+            time.sleep(1)
 
     # 3. Match
     matched = match_markets(poly_markets, all_fixtures)
