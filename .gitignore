@@ -9,3 +9,4 @@ price_history.json
 trade_log.json
 *.db
 .pytest_cache/
+esports_price_history.json
