@@ -281,16 +281,36 @@ def match_markets(poly_markets, fixtures):
 
     print(f"    Polymarket parsed: {poly_parsed} vs-matches", flush=True)
     # Show sample Polymarket names
-    sample_poly = []
-    for m in poly_markets[:20]:
+    for m in poly_markets[:10]:
         title = m.get("_event_title", "") or m.get("question", "")
         vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
         if vs_match:
-            sample_poly.append(f"{normalize_team(vs_match.group(1))} vs {normalize_team(vs_match.group(2))}")
-    if sample_poly:
-        print(f"    Polymarket samples:", flush=True)
-        for s in sample_poly[:5]:
-            print(f"      {s}", flush=True)
+            t1n = normalize_team(vs_match.group(1))
+            t2n = normalize_team(vs_match.group(2))
+            key = tuple(sorted([t1n, t2n]))
+            in_odds = "✓ MATCH" if key in fix_index else ""
+            print(f"      Poly: '{t1n}' vs '{t2n}' {in_odds}", flush=True)
+
+    # Show near-misses: Polymarket teams that partially match OddsPapi
+    odds_teams = set()
+    for fix in fixtures:
+        odds_teams.add(normalize_team(fix.get("participant1Name", "")))
+        odds_teams.add(normalize_team(fix.get("participant2Name", "")))
+    
+    near_misses = 0
+    for m in poly_markets[:50]:
+        title = m.get("_event_title", "") or m.get("question", "")
+        vs_match = re.search(r'(?::\s*)?(.+?)\s+vs\.?\s+(.+?)(?:\s*\(|$)', title, re.IGNORECASE)
+        if not vs_match:
+            continue
+        t1n = normalize_team(vs_match.group(1))
+        for ot in odds_teams:
+            if ot and t1n and (t1n in ot or ot in t1n) and t1n != ot:
+                print(f"      NEAR MISS: Poly='{t1n}' ~ OddsPapi='{ot}'", flush=True)
+                near_misses += 1
+                break
+        if near_misses >= 5:
+            break
 
     return matched
 
@@ -322,33 +342,40 @@ def collect():
     with_odds = sum(1 for f in all_fixtures if f.get("hasOdds"))
     print(f"  Fixtures with odds: {with_odds}/{len(all_fixtures)}", flush=True)
 
-    # Debug: try /odds endpoint
+    # Debug: fetch odds for a fixture WITH odds
     if all_fixtures and ODDSPAPI_KEY:
-        fid = all_fixtures[0].get("fixtureId", "")
-        print(f"\n  Debug: trying odds endpoints...", flush=True)
+        # Find first fixture with hasOdds=true
+        odds_fixture = None
+        for f in all_fixtures:
+            if f.get("hasOdds"):
+                odds_fixture = f
+                break
         
-        for endpoint in [
-            f"{ODDSPAPI_BASE}/odds?apiKey={ODDSPAPI_KEY}&fixtureId={fid}",
-            f"{ODDSPAPI_BASE}/odds?apiKey={ODDSPAPI_KEY}&sportId=17&from={datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}&to={(datetime.now(timezone.utc) + timedelta(days=1)).strftime('%Y-%m-%dT%H:%M:%SZ')}",
-            f"{ODDSPAPI_BASE}/odds/prematch?apiKey={ODDSPAPI_KEY}&sportId=17",
-            f"{ODDSPAPI_BASE}/fixtures/odds?apiKey={ODDSPAPI_KEY}&fixtureId={fid}",
-        ]:
+        if odds_fixture:
+            fid = odds_fixture.get("fixtureId", "")
+            p1 = odds_fixture.get("participant1Name", "?")
+            p2 = odds_fixture.get("participant2Name", "?")
+            print(f"\n  Debug: odds for {p1} vs {p2} (id={fid})...", flush=True)
             try:
-                # Clean URL for logging
-                clean_url = endpoint.split("apiKey=")[0] + "apiKey=***&" + "&".join(endpoint.split("apiKey=")[1].split("&")[1:])
-                print(f"    Trying: {clean_url[:80]}...", flush=True)
-                resp = requests.get(endpoint, timeout=10)
+                resp = requests.get(f"{ODDSPAPI_BASE}/odds", params={
+                    "apiKey": ODDSPAPI_KEY,
+                    "fixtureId": fid,
+                }, timeout=15)
                 print(f"    Status: {resp.status_code}", flush=True)
                 if resp.status_code == 200:
                     data = resp.json()
-                    if isinstance(data, list) and data:
-                        print(f"    SUCCESS! {len(data)} items, keys: {list(data[0].keys())[:8]}", flush=True)
-                        print(f"    Sample: {json.dumps(data[0], indent=2)[:300]}", flush=True)
-                        break
-                    elif isinstance(data, dict):
-                        print(f"    Dict keys: {list(data.keys())[:8]}", flush=True)
-                elif resp.status_code != 404:
-                    print(f"    {resp.text[:100]}", flush=True)
+                    print(f"    Keys: {list(data.keys())[:10]}", flush=True)
+                    # Look for odds/bookmakers/markets
+                    for key in ["odds", "bookmakers", "markets", "pinnacle"]:
+                        if key in data:
+                            val = data[key]
+                            print(f"    {key}: {json.dumps(val, indent=2)[:300]}", flush=True)
+                    # Print full if small
+                    data_str = json.dumps(data, indent=2)
+                    if len(data_str) < 600:
+                        print(f"    FULL: {data_str}", flush=True)
+                    else:
+                        print(f"    Truncated: {data_str[:500]}...", flush=True)
             except Exception as e:
                 print(f"    Error: {e}", flush=True)
             time.sleep(1)
