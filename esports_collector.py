@@ -158,9 +158,15 @@ def fetch_esports_odds():
     for game, sport_id in ESPORT_IDS.items():
         print(f"  Fetching {game} (id={sport_id})...", flush=True)
         try:
+            # OddsPapi requires from/to date range
+            from_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            to_date = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            
             resp = requests.get(f"{ODDSPAPI_BASE}/fixtures", params={
                 "apiKey": ODDSPAPI_KEY,
                 "sportId": sport_id,
+                "from": from_date,
+                "to": to_date,
             }, timeout=30)
             print(f"    Status: {resp.status_code}", flush=True)
 
@@ -187,7 +193,7 @@ def fetch_esports_odds():
                 print(f"    Error: {resp.text[:150]}", flush=True)
         except Exception as e:
             print(f"    Error: {e}", flush=True)
-        time.sleep(0.5)
+        time.sleep(2)  # Avoid rate limiting
 
     return all_fixtures
 
