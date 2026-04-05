@@ -213,49 +213,76 @@ def fetch_fixture_odds(fixture_id):
 
 
 def extract_pinnacle_odds(odds_data):
-    """Extract Pinnacle match-winner odds from bookmakerOdds structure."""
+    """Extract match-winner odds from OddsPapi bookmakerOdds structure.
+    
+    Real structure:
+    bookmakerOdds.{bk}.markets.{mktId}.outcomes.{outId}.players.{idx}
+      .bookmakerOutcomeId = "home"/"away"
+      .price = 1.50
+    """
     bk_odds = odds_data.get("bookmakerOdds", {})
     
-    # Priority: pinnacle first, then any sharp book
-    for bk_key in ["pinnacle", "betway", "bet365", "unibet", "1xbet"]:
-        bk = bk_odds.get(bk_key)
-        if not bk or not bk.get("bookmakerIsActive"):
-            continue
-        markets = bk.get("markets", {})
-        # Market 171 = Match Winner
-        mw = markets.get("171", markets.get("match_winner", {}))
-        if not mw:
-            # Try first market
-            for mk, mv in markets.items():
-                mw = mv
-                break
-        if mw:
-            outcomes = mw.get("outcomes", {})
-            # outcomes can be {"171": {"price": 1.5}, "172": {"price": 2.3}}
-            prices = []
-            for out_key, out_val in outcomes.items():
-                if isinstance(out_val, dict) and "price" in out_val:
-                    prices.append(float(out_val["price"]))
-                elif isinstance(out_val, (int, float)):
-                    prices.append(float(out_val))
-            if len(prices) >= 2:
-                return prices[0], prices[1], bk_key
+    # Priority order for bookmakers
+    priority = ["pinnacle", "betway", "bet365", "unibet", "1xbet", "stake", "bcgame", "roobet"]
     
-    # Fallback: any bookmaker with odds
-    for bk_key, bk in bk_odds.items():
+    # Try priority books first, then any
+    bk_keys_to_try = [k for k in priority if k in bk_odds]
+    bk_keys_to_try += [k for k in bk_odds if k not in priority]
+    
+    for bk_key in bk_keys_to_try:
+        bk = bk_odds.get(bk_key)
         if not isinstance(bk, dict) or not bk.get("bookmakerIsActive"):
             continue
+        
         markets = bk.get("markets", {})
-        for mk, mv in markets.items():
-            if not isinstance(mv, dict):
+        
+        for mkt_id, mkt_data in markets.items():
+            if not isinstance(mkt_data, dict):
                 continue
-            outcomes = mv.get("outcomes", {})
-            prices = []
-            for out_key, out_val in outcomes.items():
-                if isinstance(out_val, dict) and "price" in out_val:
-                    prices.append(float(out_val["price"]))
-            if len(prices) >= 2:
-                return prices[0], prices[1], bk_key
+            
+            outcomes = mkt_data.get("outcomes", {})
+            
+            # Collect all prices from this market
+            home_price = None
+            away_price = None
+            all_prices = []
+            
+            for out_id, out_data in outcomes.items():
+                if not isinstance(out_data, dict):
+                    continue
+                
+                # Check if price is directly on outcome
+                if "price" in out_data:
+                    all_prices.append(float(out_data["price"]))
+                    oid = out_data.get("bookmakerOutcomeId", "").lower()
+                    if oid in ("home", "1", "team1"):
+                        home_price = float(out_data["price"])
+                    elif oid in ("away", "2", "team2"):
+                        away_price = float(out_data["price"])
+                
+                # Check players nested structure
+                players = out_data.get("players", {})
+                if isinstance(players, dict):
+                    for pid, pdata in players.items():
+                        if not isinstance(pdata, dict):
+                            continue
+                        if "price" in pdata and pdata.get("active", True):
+                            price = float(pdata["price"])
+                            all_prices.append(price)
+                            oid = pdata.get("bookmakerOutcomeId", "").lower()
+                            if oid in ("home", "1", "team1"):
+                                home_price = price
+                            elif oid in ("away", "2", "team2"):
+                                away_price = price
+            
+            # Return if we found two prices
+            if home_price and away_price and home_price > 1 and away_price > 1:
+                return home_price, away_price, bk_key
+            
+            # Fallback: if we have exactly 2 prices
+            valid = [p for p in all_prices if p > 1]
+            if len(valid) >= 2:
+                return valid[0], valid[1], bk_key
     
     return None, None, None
 
@@ -470,7 +497,13 @@ def collect():
                     markets = bk.get("markets", {})
                     print(f"    {bk_key}: active={bk.get('bookmakerIsActive')}, markets={list(markets.keys())[:5]}", flush=True)
                     for mk, mv in list(markets.items())[:2]:
-                        print(f"      market {mk}: {json.dumps(mv, indent=2)[:200]}", flush=True)
+                        outcomes = mv.get("outcomes", {}) if isinstance(mv, dict) else {}
+                        for oid, odata in list(outcomes.items())[:1]:
+                            players = odata.get("players", {}) if isinstance(odata, dict) else {}
+                            print(f"      market {mk}, outcome {oid}: players keys={list(players.keys())[:3]}", flush=True)
+                            for pid, pdata in list(players.items())[:2]:
+                                if isinstance(pdata, dict):
+                                    print(f"        player {pid}: price={pdata.get('price')}, outcomeId={pdata.get('bookmakerOutcomeId')}, active={pdata.get('active')}", flush=True)
             # If no priority books, show first available
             if not any(bk_odds.get(k) for k in ["pinnacle", "betway", "bet365"]):
                 first_bk = list(bk_odds.keys())[0] if bk_odds else "none"
@@ -479,7 +512,13 @@ def collect():
                     markets = bk.get("markets", {})
                     print(f"    {first_bk}: active={bk.get('bookmakerIsActive')}, markets={list(markets.keys())[:5]}", flush=True)
                     for mk, mv in list(markets.items())[:1]:
-                        print(f"      market {mk}: {json.dumps(mv, indent=2)[:300]}", flush=True)
+                        outcomes = mv.get("outcomes", {}) if isinstance(mv, dict) else {}
+                        for oid, odata in list(outcomes.items())[:1]:
+                            players = odata.get("players", {}) if isinstance(odata, dict) else {}
+                            print(f"      market {mk}, outcome {oid}: players keys={list(players.keys())[:3]}", flush=True)
+                            for pid, pdata in list(players.items())[:2]:
+                                if isinstance(pdata, dict):
+                                    print(f"        player {pid}: price={pdata.get('price')}, outcomeId={pdata.get('bookmakerOutcomeId')}", flush=True)
 
         odds_a, odds_b, bk_source = extract_pinnacle_odds(odds_data)
 
