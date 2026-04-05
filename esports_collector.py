@@ -254,7 +254,7 @@ def extract_pinnacle_odds(odds_data):
                 # Check if price is directly on outcome
                 if "price" in out_data:
                     all_prices.append(float(out_data["price"]))
-                    oid = out_data.get("bookmakerOutcomeId", "").lower()
+                    oid = (out_data.get("bookmakerOutcomeId") or "").lower()
                     if oid in ("home", "1", "team1"):
                         home_price = float(out_data["price"])
                     elif oid in ("away", "2", "team2"):
@@ -269,7 +269,7 @@ def extract_pinnacle_odds(odds_data):
                         if "price" in pdata and pdata.get("active", True):
                             price = float(pdata["price"])
                             all_prices.append(price)
-                            oid = pdata.get("bookmakerOutcomeId", "").lower()
+                            oid = (pdata.get("bookmakerOutcomeId") or "").lower()
                             if oid in ("home", "1", "team1"):
                                 home_price = price
                             elif oid in ("away", "2", "team2"):
