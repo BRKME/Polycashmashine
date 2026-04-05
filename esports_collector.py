@@ -198,31 +198,66 @@ def fetch_esports_odds():
     return all_fixtures
 
 
-def extract_pinnacle_odds(fixture):
-    """Extract Pinnacle h2h odds from OddsPapi fixture."""
-    markets = fixture.get("markets", [])
-    bookmakers = fixture.get("bookmakers", fixture.get("odds", []))
+def fetch_fixture_odds(fixture_id):
+    """Fetch odds for a specific fixture from OddsPapi."""
+    try:
+        resp = requests.get(f"{ODDSPAPI_BASE}/odds", params={
+            "apiKey": ODDSPAPI_KEY,
+            "fixtureId": fixture_id,
+        }, timeout=15)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def extract_pinnacle_odds(odds_data):
+    """Extract Pinnacle match-winner odds from bookmakerOdds structure."""
+    bk_odds = odds_data.get("bookmakerOdds", {})
     
-    # Try different response structures
-    # Structure 1: fixture.markets[].outcomes[]
-    for mkt in markets:
-        market_id = mkt.get("marketId", mkt.get("id", 0))
-        if market_id == 171 or mkt.get("key") == "match_winner":
-            outcomes = mkt.get("outcomes", [])
-            if len(outcomes) >= 2:
-                return float(outcomes[0].get("price", 0)), float(outcomes[1].get("price", 0))
+    # Priority: pinnacle first, then any sharp book
+    for bk_key in ["pinnacle", "betway", "bet365", "unibet", "1xbet"]:
+        bk = bk_odds.get(bk_key)
+        if not bk or not bk.get("bookmakerIsActive"):
+            continue
+        markets = bk.get("markets", {})
+        # Market 171 = Match Winner
+        mw = markets.get("171", markets.get("match_winner", {}))
+        if not mw:
+            # Try first market
+            for mk, mv in markets.items():
+                mw = mv
+                break
+        if mw:
+            outcomes = mw.get("outcomes", {})
+            # outcomes can be {"171": {"price": 1.5}, "172": {"price": 2.3}}
+            prices = []
+            for out_key, out_val in outcomes.items():
+                if isinstance(out_val, dict) and "price" in out_val:
+                    prices.append(float(out_val["price"]))
+                elif isinstance(out_val, (int, float)):
+                    prices.append(float(out_val))
+            if len(prices) >= 2:
+                return prices[0], prices[1], bk_key
     
-    # Structure 2: fixture.odds.pinnacle or fixture.bookmakers
-    if isinstance(bookmakers, list):
-        for bk in bookmakers:
-            bk_key = bk.get("key", bk.get("bookmaker", "")).lower()
-            if "pinnacle" in bk_key:
-                for mkt in bk.get("markets", []):
-                    outcomes = mkt.get("outcomes", [])
-                    if len(outcomes) >= 2:
-                        return float(outcomes[0].get("price", 0)), float(outcomes[1].get("price", 0))
+    # Fallback: any bookmaker with odds
+    for bk_key, bk in bk_odds.items():
+        if not isinstance(bk, dict) or not bk.get("bookmakerIsActive"):
+            continue
+        markets = bk.get("markets", {})
+        for mk, mv in markets.items():
+            if not isinstance(mv, dict):
+                continue
+            outcomes = mv.get("outcomes", {})
+            prices = []
+            for out_key, out_val in outcomes.items():
+                if isinstance(out_val, dict) and "price" in out_val:
+                    prices.append(float(out_val["price"]))
+            if len(prices) >= 2:
+                return prices[0], prices[1], bk_key
     
-    return None, None
+    return None, None, None
 
 
 def normalize_team(name):
@@ -397,14 +432,34 @@ def collect():
     matched = match_markets(poly_markets, all_fixtures)
     print(f"  Matched: {len(matched)} pairs", flush=True)
 
-    # 4. Record snapshots
+    # 5. Record snapshots — fetch odds for matched fixtures with hasOdds=true
     new_snapshots = 0
+    odds_fetched = 0
+    MAX_ODDS_FETCHES = 30  # Limit API calls per run
+
+    # Deduplicate matched by fixture ID
+    seen_fixtures = set()
+    unique_matched = []
     for pair in matched:
+        fid = pair["fixture"].get("fixtureId", "")
+        if fid not in seen_fixtures and pair["fixture"].get("hasOdds"):
+            seen_fixtures.add(fid)
+            unique_matched.append(pair)
+
+    print(f"  Unique matched with odds: {len(unique_matched)}", flush=True)
+
+    for pair in unique_matched[:MAX_ODDS_FETCHES]:
         poly = pair["polymarket"]
         fix = pair["fixture"]
+        fid = fix.get("fixtureId", "")
 
-        # Extract odds
-        odds_a, odds_b = extract_pinnacle_odds(fix)
+        # Fetch odds for this fixture
+        odds_data = fetch_fixture_odds(fid)
+        odds_fetched += 1
+        if not odds_data:
+            continue
+
+        odds_a, odds_b, bk_source = extract_pinnacle_odds(odds_data)
 
         if not odds_a or not odds_b or odds_a <= 1 or odds_b <= 1:
             continue
@@ -449,9 +504,10 @@ def collect():
             "game": fix.get("_game", ""),
             "team_a": pair["team_a"],
             "team_b": pair["team_b"],
-            "tournament": fix.get("sport_title", fix.get("tournament", {}).get("name", ""))[:40],
+            "tournament": fix.get("tournamentName", "")[:40],
             "match_start": start_time,
             "hours_to_start": hours_to_start,
+            "odds_source": bk_source,
             "pin_odds_a": odds_a,
             "pin_odds_b": odds_b,
             "pin_vig_pct": round((1/odds_a + 1/odds_b - 1) * 100, 1),
@@ -473,15 +529,18 @@ def collect():
 
         if abs(snapshot["diff_pct"]) >= 5:
             print(f"\n  >>> {snapshot['game']}: {pair['team_a']} vs {pair['team_b']}", flush=True)
-            print(f"      Sharp fair: {fair_a:.0%} | Polymarket: {yes_price:.0%} | Diff: {snapshot['diff_pct']:+.1f}%", flush=True)
+            print(f"      {bk_source} fair: {fair_a:.0%} | Polymarket: {yes_price:.0%} | Diff: {snapshot['diff_pct']:+.1f}%", flush=True)
             if book:
                 print(f"      Spread: {book['spread']:.2f} | Bid depth: ${book['bid_depth']:.0f} | Ask depth: ${book['ask_depth']:.0f}", flush=True)
+
+        time.sleep(1)  # Rate limit between odds fetches
 
     save_history(history)
 
     # Summary
     total = len(history["snapshots"])
-    print(f"\n  New snapshots: {new_snapshots}", flush=True)
+    print(f"\n  Odds fetched: {odds_fetched}", flush=True)
+    print(f"  New snapshots: {new_snapshots}", flush=True)
     print(f"  Total in history: {total}", flush=True)
 
     # Stats on differences
