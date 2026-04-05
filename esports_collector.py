@@ -459,9 +459,33 @@ def collect():
         if not odds_data:
             continue
 
+        # Debug: show bookmakerOdds structure for first few
+        if odds_fetched <= 3:
+            bk_odds = odds_data.get("bookmakerOdds", {})
+            print(f"\n  Debug odds #{odds_fetched}: {fix.get('participant1Name')} vs {fix.get('participant2Name')}", flush=True)
+            print(f"    Bookmakers: {list(bk_odds.keys())[:8]}", flush=True)
+            for bk_key in ["pinnacle", "betway", "bet365"]:
+                bk = bk_odds.get(bk_key)
+                if bk:
+                    markets = bk.get("markets", {})
+                    print(f"    {bk_key}: active={bk.get('bookmakerIsActive')}, markets={list(markets.keys())[:5]}", flush=True)
+                    for mk, mv in list(markets.items())[:2]:
+                        print(f"      market {mk}: {json.dumps(mv, indent=2)[:200]}", flush=True)
+            # If no priority books, show first available
+            if not any(bk_odds.get(k) for k in ["pinnacle", "betway", "bet365"]):
+                first_bk = list(bk_odds.keys())[0] if bk_odds else "none"
+                if first_bk != "none":
+                    bk = bk_odds[first_bk]
+                    markets = bk.get("markets", {})
+                    print(f"    {first_bk}: active={bk.get('bookmakerIsActive')}, markets={list(markets.keys())[:5]}", flush=True)
+                    for mk, mv in list(markets.items())[:1]:
+                        print(f"      market {mk}: {json.dumps(mv, indent=2)[:300]}", flush=True)
+
         odds_a, odds_b, bk_source = extract_pinnacle_odds(odds_data)
 
         if not odds_a or not odds_b or odds_a <= 1 or odds_b <= 1:
+            if odds_fetched <= 3:
+                print(f"    EXTRACT FAILED: odds_a={odds_a}, odds_b={odds_b}, source={bk_source}", flush=True)
             continue
 
         # Devig
