@@ -1,127 +1,127 @@
 {
-  "generated": "2026-04-06",
+  "generated": "2026-04-13",
   "model": "gfs_seamless",
   "days": 90,
   "cities": {
     "nyc": {
       "city_id": "nyc",
       "n_days": 91,
-      "bias": 2.07,
-      "mae": 2.77,
-      "rmse": 3.61,
-      "real_std": 2.97,
-      "mean_actual": 42.0,
-      "mean_forecast": 44.1
+      "bias": 1.96,
+      "mae": 2.74,
+      "rmse": 3.6,
+      "real_std": 3.03,
+      "mean_actual": 42.8,
+      "mean_forecast": 44.7
     },
     "london": {
       "city_id": "london",
       "n_days": 91,
-      "bias": 0.04,
+      "bias": 0.0,
       "mae": 0.53,
-      "rmse": 0.74,
+      "rmse": 0.73,
       "real_std": 0.74,
-      "mean_actual": 10.7,
-      "mean_forecast": 10.7
+      "mean_actual": 11.6,
+      "mean_forecast": 11.6
     },
     "paris": {
       "city_id": "paris",
       "n_days": 91,
-      "bias": 0.16,
-      "mae": 0.57,
-      "rmse": 0.73,
-      "real_std": 0.71,
-      "mean_actual": 11.5,
-      "mean_forecast": 11.7
+      "bias": 0.19,
+      "mae": 0.59,
+      "rmse": 0.74,
+      "real_std": 0.72,
+      "mean_actual": 12.6,
+      "mean_forecast": 12.8
     },
     "seoul": {
       "city_id": "seoul",
       "n_days": 91,
-      "bias": 0.31,
-      "mae": 0.78,
-      "rmse": 1.04,
-      "real_std": 1.0,
-      "mean_actual": 6.5,
-      "mean_forecast": 6.8
+      "bias": 0.41,
+      "mae": 0.81,
+      "rmse": 1.06,
+      "real_std": 0.98,
+      "mean_actual": 7.6,
+      "mean_forecast": 8.0
     },
     "tokyo": {
       "city_id": "tokyo",
       "n_days": 91,
-      "bias": -0.3,
-      "mae": 0.86,
-      "rmse": 1.03,
-      "real_std": 0.99,
-      "mean_actual": 12.8,
-      "mean_forecast": 12.5
+      "bias": -0.24,
+      "mae": 0.87,
+      "rmse": 1.05,
+      "real_std": 1.03,
+      "mean_actual": 13.5,
+      "mean_forecast": 13.3
     },
     "chicago": {
       "city_id": "chicago",
       "n_days": 91,
-      "bias": 1.99,
-      "mae": 2.26,
-      "rmse": 2.76,
-      "real_std": 1.92,
-      "mean_actual": 41.4,
-      "mean_forecast": 43.3
+      "bias": 2.06,
+      "mae": 2.33,
+      "rmse": 2.81,
+      "real_std": 1.91,
+      "mean_actual": 42.4,
+      "mean_forecast": 44.4
     },
     "dallas": {
       "city_id": "dallas",
       "n_days": 91,
-      "bias": 0.87,
-      "mae": 1.51,
-      "rmse": 1.98,
-      "real_std": 1.79,
-      "mean_actual": 68.4,
-      "mean_forecast": 69.2
+      "bias": 1.04,
+      "mae": 1.55,
+      "rmse": 2.0,
+      "real_std": 1.71,
+      "mean_actual": 68.8,
+      "mean_forecast": 69.9
     },
     "miami": {
       "city_id": "miami",
       "n_days": 91,
-      "bias": 0.54,
-      "mae": 1.25,
-      "rmse": 1.59,
-      "real_std": 1.5,
+      "bias": 0.5,
+      "mae": 1.24,
+      "rmse": 1.58,
+      "real_std": 1.51,
       "mean_actual": 76.8,
-      "mean_forecast": 77.4
+      "mean_forecast": 77.3
     },
     "tel_aviv": {
       "city_id": "tel_aviv",
       "n_days": 91,
-      "bias": -0.46,
-      "mae": 0.75,
-      "rmse": 0.92,
-      "real_std": 0.8,
-      "mean_actual": 20.0,
-      "mean_forecast": 19.5
+      "bias": -0.54,
+      "mae": 0.77,
+      "rmse": 0.93,
+      "real_std": 0.77,
+      "mean_actual": 19.9,
+      "mean_forecast": 19.4
     },
     "hong_kong": {
       "city_id": "hong_kong",
       "n_days": 91,
-      "bias": -0.75,
-      "mae": 1.06,
-      "rmse": 1.3,
+      "bias": -0.7,
+      "mae": 1.03,
+      "rmse": 1.27,
       "real_std": 1.06,
-      "mean_actual": 22.3,
-      "mean_forecast": 21.6
+      "mean_actual": 22.9,
+      "mean_forecast": 22.2
     },
     "shanghai": {
       "city_id": "shanghai",
       "n_days": 91,
-      "bias": 0.2,
-      "mae": 0.83,
-      "rmse": 0.98,
-      "real_std": 0.97,
-      "mean_actual": 13.2,
-      "mean_forecast": 13.4
+      "bias": 0.13,
+      "mae": 0.86,
+      "rmse": 1.03,
+      "real_std": 1.03,
+      "mean_actual": 14.1,
+      "mean_forecast": 14.2
     },
     "warsaw": {
       "city_id": "warsaw",
       "n_days": 91,
-      "bias": 0.1,
-      "mae": 0.85,
-      "rmse": 1.15,
-      "real_std": 1.15,
-      "mean_actual": 4.1,
-      "mean_forecast": 4.2
+      "bias": -0.02,
+      "mae": 0.77,
+      "rmse": 1.03,
+      "real_std": 1.04,
+      "mean_actual": 5.3,
+      "mean_forecast": 5.3
     }
   }
 }
